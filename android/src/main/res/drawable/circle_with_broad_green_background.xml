@@ -1,0 +1,27 @@
+<!-- res/drawable/circle_green_icon.xml -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Outer Circle -->
+    <item
+        android:top="1dp"
+        android:bottom="1dp"
+        android:left="1dp"
+        android:right="1dp">
+        <shape android:shape="oval">
+            <solid android:color="#4AAB24" /> <!-- Dark green color -->
+        </shape>
+    </item>
+
+    <!-- Inner Circle with Padding -->
+    <item
+        android:top="5dp"
+        android:bottom="5dp"
+        android:left="5dp"
+        android:right="5dp"
+       >
+        <shape android:shape="oval">
+            <solid android:color="#D0EEC4" /> <!-- Light green color -->
+        </shape>
+    </item>
+
+</layer-list>

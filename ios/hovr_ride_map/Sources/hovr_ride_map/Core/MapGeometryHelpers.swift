@@ -1,0 +1,153 @@
+//
+//  MapGeometryHelpers.swift
+//  HOVR
+//
+
+import CoreLocation
+import Foundation
+import GoogleMaps
+import SwiftUI
+import UIKit
+
+func dismissView() {
+    if let windowScene = UIApplication.shared.connectedScenes
+        .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene {
+        if let rootViewController = windowScene.windows.first(where: { $0.isKeyWindow })?.rootViewController {
+            rootViewController.dismiss(animated: true, completion: nil)
+        }
+    }
+}
+
+func snapPathToRoads(
+    coordinates: [CLLocationCoordinate2D],
+    completion: @escaping ([CLLocationCoordinate2D]) -> Void
+) {
+    guard !coordinates.isEmpty else {
+        completion([])
+        return
+    }
+
+    let apiKey = HovrRideMapResources.googleMapsApiKey
+    guard !apiKey.isEmpty else {
+        completion([])
+        return
+    }
+    let baseUrl = "https://roads.googleapis.com/v1/snapToRoads"
+    let pathParam = coordinates.map { "\($0.latitude),\($0.longitude)" }.joined(separator: "|")
+
+    guard let encodedPath = pathParam.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+        completion([])
+        return
+    }
+
+    let urlString = "\(baseUrl)?path=\(encodedPath)&interpolate=true&key=\(apiKey)"
+    guard let url = URL(string: urlString) else {
+        completion([])
+        return
+    }
+
+    let task = URLSession.shared.dataTask(with: url) { data, _, error in
+        guard
+            let data = data,
+            error == nil,
+            let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+            let snappedPoints = json["snappedPoints"] as? [[String: Any]]
+        else {
+            print("❌ Roads API error: \(error?.localizedDescription ?? "Unknown error")")
+            completion([])
+            return
+        }
+
+        let snappedCoordinates: [CLLocationCoordinate2D] = snappedPoints.compactMap { point in
+            guard
+                let location = point["location"] as? [String: Double],
+                let lat = location["latitude"],
+                let lng = location["longitude"]
+            else { return nil }
+
+            return CLLocationCoordinate2D(latitude: lat, longitude: lng)
+        }
+
+        completion(snappedCoordinates)
+    }
+
+    task.resume()
+}
+
+func calculateBearing(from start: LatLng, to end: LatLng) -> CLLocationDirection {
+    let fromLat = start.latitude.degreesToRadians
+    let fromLng = start.longitude.degreesToRadians
+    let toLat = end.latitude.degreesToRadians
+    let toLng = end.longitude.degreesToRadians
+    let dLon = toLng - fromLng
+    let y = sin(dLon) * cos(toLat)
+    let x = cos(fromLat) * sin(toLat) - sin(fromLat) * cos(toLat) * cos(dLon)
+    let radiansBearing = atan2(y, x)
+    var degrees = radiansBearing.radiansToDegrees
+    degrees = (degrees + 360).truncatingRemainder(dividingBy: 360)
+    return degrees
+}
+
+func computeBearing(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) -> CLLocationDegrees {
+    let fromLat = from.latitude.degreesToRadians
+    let fromLng = from.longitude.degreesToRadians
+    let toLat = to.latitude.degreesToRadians
+    let toLng = to.longitude.degreesToRadians
+
+    let dLon = toLng - fromLng
+    let y = sin(dLon) * cos(toLat)
+    let x = cos(fromLat) * sin(toLat) - sin(fromLat) * cos(toLat) * cos(dLon)
+    let radiansBearing = atan2(y, x)
+    var degrees = radiansBearing.radiansToDegrees
+    degrees = (degrees + 360).truncatingRemainder(dividingBy: 360)
+    return degrees
+}
+
+private extension Double {
+    var degreesToRadians: Double { self * .pi / 180 }
+    var radiansToDegrees: Double { self * 180 / .pi }
+}
+
+func addMarker(at position: CLLocationCoordinate2D, on mapView: GMSMapView, isDriver: Bool = false) -> GMSMarker {
+    let marker = GMSMarker(position: position)
+    if isDriver, let carImage = HovrRideMapResources.image(named: "car-icon") {
+        let scale = zoomScale(for: mapView.camera.zoom)
+        marker.icon = carImage.resized(to: CGSize(width: scale, height: scale))
+    } else {
+        marker.icon = GMSMarker.markerImage(with: .red)
+    }
+    marker.map = mapView
+    return marker
+}
+
+func zoomScale(for zoomLevel: Float) -> CGFloat {
+    let minZoom: Float = 10.0
+    let maxZoom: Float = 20.0
+    let minSize: CGFloat = 30
+    let maxSize: CGFloat = 40
+
+    let clampedZoom = max(minZoom, min(maxZoom, zoomLevel))
+    let ratio = (clampedZoom - minZoom) / (maxZoom - minZoom)
+    return minSize + CGFloat(ratio) * (maxSize - minSize)
+}
+
+func cleanedEncodedPolyline(_ encoded: String) -> String {
+    encoded
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .replacingOccurrences(of: "\"", with: "")
+        .replacingOccurrences(of: "'", with: "")
+        .replacingOccurrences(of: "\\\\", with: "\\")
+}
+
+func gmsPath(fromEncodedPolyline encoded: String) -> GMSPath? {
+    let cleaned = cleanedEncodedPolyline(encoded)
+    guard !cleaned.isEmpty else { return nil }
+    return GMSPath(fromEncodedPath: cleaned)
+}
+
+func coordinateFromChannelValue(_ value: Any?) -> CLLocationDegrees? {
+    if let doubleValue = value as? Double { return doubleValue }
+    if let intValue = value as? Int { return CLLocationDegrees(intValue) }
+    if let number = value as? NSNumber { return number.doubleValue }
+    return nil
+}
