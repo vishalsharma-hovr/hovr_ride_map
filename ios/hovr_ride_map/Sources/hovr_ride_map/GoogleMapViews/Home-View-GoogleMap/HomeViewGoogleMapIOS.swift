@@ -36,12 +36,10 @@ final class HomeViewGoogleMapIOS: NSObject, FlutterPlatformView {
     
     // Buffer/drainer
     private var inbox: [String: [CarFix]] = [:]
-    private var lastOut: [String: CarFix] = [:]
     private var bufferPaused = false
     private var pendingStartDelayMs: TimeInterval = 0.001
     private var drainIntervalMs: TimeInterval = 0.35
     private static let MIN_TICK_MS: TimeInterval = 0.120
-    private static let CORNER_TICK_FACTOR = 0.8
     private static let MAX_ACTIVE_DRIVERS = 12
     private static let MAX_QUEUE_PER_DRIVER = 30
     
@@ -374,7 +372,6 @@ final class HomeViewGoogleMapIOS: NSObject, FlutterPlatformView {
         // print("🔵 Inbox keys: \(inbox.keys.sorted())")
         
         var batch: [CarFix] = []
-        var inCorner = false
         let allowed = pickAllowedDrivers()
         
         // print("🔵 Allowed drivers: \(allowed)")
@@ -384,33 +381,9 @@ final class HomeViewGoogleMapIOS: NSObject, FlutterPlatformView {
             let cur = queue.removeFirst()
             inbox[id] = queue
             
-            let prevOut = lastOut[id]
-            let nxt = queue.first
-            
-            let expanded = arcifySegment(prev: prevOut, cur: cur, next: nxt)
-            if expanded.count > 1 { inCorner = true }
-            
-            var first = expanded.first!
-            if expanded.count > 1 {
-                first = CarFix(
-                    id: first.id,
-                    lat: first.lat,
-                    lng: first.lng,
-                    bearingDeg: first.bearingDeg,
-                    speedMps: (first.speedMps ?? 6) * 0.6,
-                    timestampMs: first.timestampMs
-                )
-            }
-            batch.append(first)
-            lastOut[id] = first
-            
-            if expanded.count > 1 {
-                var q = inbox[id] ?? []
-                for i in stride(from: expanded.count - 1, to: 0, by: -1) {
-                    q.insert(expanded[i], at: 0)
-                }
-                inbox[id] = q
-            }
+            // Feed fixes directly — arcifySegment injected synthetic headings that
+            // caused unstable rotation compared to Android's direct upsert path.
+            batch.append(cur)
         }
         
         if !batch.isEmpty {
@@ -418,9 +391,7 @@ final class HomeViewGoogleMapIOS: NSObject, FlutterPlatformView {
             // print("🔵 Marker IDs: \(batch.map { $0.id })")
             carMarkers.upsert(fixes: batch, nowMs: CACurrentMediaTime())
             
-            let interval = inCorner
-                ? max(drainIntervalMs * Self.CORNER_TICK_FACTOR, Self.MIN_TICK_MS)
-                : drainIntervalMs
+            let interval = drainIntervalMs
             
             setOneShotDrain(after: interval)
         } else {
@@ -428,69 +399,6 @@ final class HomeViewGoogleMapIOS: NSObject, FlutterPlatformView {
             drainSrc?.cancel()
             drainSrc = nil
         }
-    }
-    
-    private func normHeading(_ h: Double) -> Double {
-        var x = h.truncatingRemainder(dividingBy: 360)
-        if x < 0 { x += 360 }
-        return x
-    }
-    
-    private func deltaHeading(a: Double, b: Double) -> Double {
-        var d = normHeading(b) - normHeading(a)
-        if d > 180 { d -= 360 }
-        if d < -180 { d += 360 }
-        return d
-    }
-    
-    private func courseDeg(a: CLLocationCoordinate2D, b: CLLocationCoordinate2D) -> Double {
-        let φ1 = a.latitude * .pi / 180.0
-        let φ2 = b.latitude * .pi / 180.0
-        let Δλ = (b.longitude - a.longitude) * .pi / 180.0
-        let y = sin(Δλ) * cos(φ2)
-        let x = cos(φ1) * sin(φ2) - sin(φ1) * cos(φ2) * cos(Δλ)
-        var θ = atan2(y, x) * 180.0 / .pi
-        if θ < 0 { θ += 360 }
-        return θ
-    }
-    
-    private func lerpHeadingShortest(a: Double, b: Double, t: Double) -> Double {
-        let d = deltaHeading(a: a, b: b)
-        return normHeading(a + d * t)
-    }
-    
-    private func arcifySegment(
-        prev: CarFix?,
-        cur: CarFix,
-        next: CarFix?,
-        maxTurnDeg: Double = 25.0,
-        segmentsMin: Int = 3,
-        segmentsMax: Int = 10
-    ) -> [CarFix] {
-        guard let prev = prev, let next = next else { return [cur] }
-        
-        let A = CLLocationCoordinate2D(latitude: prev.lat, longitude: prev.lng)
-        let B = CLLocationCoordinate2D(latitude: cur.lat, longitude: cur.lng)
-        let C = CLLocationCoordinate2D(latitude: next.lat, longitude: next.lng)
-        
-        let headAB = courseDeg(a: A, b: B)
-        let headBC = courseDeg(a: B, b: C)
-        let turn = abs(deltaHeading(a: headAB, b: headBC))
-        if turn < maxTurnDeg { return [cur] }
-        
-        let segCount = max(segmentsMin, min(segmentsMax,
-                                            segmentsMin + Int(Double(segmentsMax - segmentsMin) * (turn / 100.0))))
-        
-        var out: [CarFix] = []
-        let now = Int64(Date().timeIntervalSince1970 * 1000)
-        for i in 1...segCount {
-            let t = Double(i) / Double(segCount)
-            let p = slerpLatLng(a: A, b: B, t: Float(t))
-            let brg = lerpHeadingShortest(a: headAB, b: headBC, t: t)
-            out.append(CarFix(id: cur.id, lat: p.latitude, lng: p.longitude,
-                              bearingDeg: Float(brg), speedMps: cur.speedMps, timestampMs: now))
-        }
-        return out
     }
     
     func pauseBuffer() {
@@ -528,7 +436,6 @@ final class HomeViewGoogleMapIOS: NSObject, FlutterPlatformView {
         drainSrc?.cancel()
         drainSrc = nil
         inbox.removeAll()
-        lastOut.removeAll()
         pendingDriverBatches.removeAll()
         driversShownIds.removeAll()
     }
