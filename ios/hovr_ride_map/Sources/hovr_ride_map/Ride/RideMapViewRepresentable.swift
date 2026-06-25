@@ -51,12 +51,47 @@ struct RideMapViewRepresentable: UIViewRepresentable {
         var mapView: GMSMapView?
         var cancellables = Set<AnyCancellable>()
         var activePolyline: GMSPolyline?
-        var traveledPolyline: GMSPolyline? // Polyline for the traveled path
+        var traveledPolyline: GMSPolyline?
         var lastProcessedPolyline: String = ""
-        
-            // Marker properties
-        var carMarker: GMSMarker?
+
         var dropOffMarker: GMSMarker?
+
+        private let tripDriverId = "trip-driver"
+        private var carMarkers: CarMarkers?
+        private var lastDriverCoordinate: CLLocationCoordinate2D?
+
+        /// Used by recenter logic — backed by [CarMarkers].
+        var carMarker: GMSMarker? {
+            carMarkers?.marker(for: tripDriverId)
+        }
+
+        func bindCarMarkers(on mapView: GMSMapView) {
+            guard carMarkers == nil,
+                  let carImage = HovrRideMapResources.image(named: "car-icon") else {
+                return
+            }
+            carMarkers = CarMarkers(map: mapView, icon: carImage)
+        }
+
+        private func upsertTripDriver(
+            coordinate: CLLocationCoordinate2D,
+            location: [String: Any],
+            seedBearing: Float? = nil
+        ) {
+            guard let carMarkers else { return }
+            let bearing = coordinateFromChannelValue(location["bearing"]).map { Float($0) }
+                ?? seedBearing
+            let fix = CarFix(
+                id: tripDriverId,
+                lat: coordinate.latitude,
+                lng: coordinate.longitude,
+                bearingDeg: bearing,
+                speedMps: 12,
+                timestampMs: Int64(Date().timeIntervalSince1970 * 1000)
+            )
+            carMarkers.upsert(fixes: [fix])
+            lastDriverCoordinate = coordinate
+        }
         
         func performRecenterRequest(fit: String?) {
             guard let mapView else {
@@ -124,12 +159,7 @@ struct RideMapViewRepresentable: UIViewRepresentable {
                         return
                     }
                     let coordinate = CLLocationCoordinate2D(latitude: lat, longitude: lng)
-                    if let car = self.carMarker {
-                        CATransaction.begin()
-                        CATransaction.setAnimationDuration(1.0)
-                        car.position = coordinate
-                        CATransaction.commit()
-                    }
+                    self.upsertTripDriver(coordinate: coordinate, location: location)
                 }
                 .store(in: &cancellables)
         }
@@ -146,22 +176,10 @@ struct RideMapViewRepresentable: UIViewRepresentable {
         }
         
             // MARK: - Add Marker
-        
-        func addMarker(at position: CLLocationCoordinate2D, on mapView: GMSMapView, isDriver: Bool = false) -> GMSMarker {
-            let marker = GMSMarker(position: position)
-            if isDriver, let carImage = HovrRideMapResources.image(named: "car-icon") {
-                let scale = zoomScale(for: mapView.camera.zoom)
-                marker.icon = carImage.resized(to: CGSize(width: scale, height: scale))
-            } else if !isDriver {
-                marker.icon = GMSMarker.markerImage(with: .red)
-            }
-            marker.map = mapView
-            return marker
-        }
-        
+
         func addDropOffMarker(at position: CLLocationCoordinate2D, on mapView: GMSMapView) {
             dropOffMarker?.map = nil
-            
+
             let marker = GMSMarker(position: position)
             if let dropImage = HovrRideMapResources.image(named: "drop-off-marker") {
                 marker.icon = dropImage.resized(to: CGSize(width: 30, height: 30))
@@ -171,56 +189,9 @@ struct RideMapViewRepresentable: UIViewRepresentable {
             marker.map = mapView
             self.dropOffMarker = marker
         }
-        
+
             // MARK: - Zoom Scale Calculation
-        
-        func zoomScale(for zoom: Float) -> CGFloat {
-            let minSize: CGFloat = 30
-            let maxSize: CGFloat = 60
-            let minZoom: Float = 10
-            let maxZoom: Float = 20
-            
-            let clampedZoom = max(minZoom, min(maxZoom, zoom))
-            let normalizedZoom = (clampedZoom - minZoom) / (maxZoom - minZoom)
-            return minSize + (maxSize - minSize) * CGFloat(normalizedZoom)
-        }
-        
-            // MARK: - Place or Animate Car Marker
-        
-        func placeOrAnimateCarMarker(at coordinate: CLLocationCoordinate2D, bearing: CLLocationDirection, on mapView: GMSMapView) {
-            if let existingMarker = carMarker {
-                CATransaction.begin()
-                CATransaction.setAnimationDuration(1.0)
-                existingMarker.position = coordinate
-                existingMarker.rotation = bearing
-                CATransaction.commit()
-                
-                print("🚗 Car marker animated to: \(coordinate.latitude), \(coordinate.longitude) with bearing: \(bearing)°")
-            } else {
-//                let location = DriverLocationController.shared.driverLocation
-                var initialPos = coordinate
-//                
-//                if let lat = location["lat"] as? CLLocationDegrees,
-//                   let lng = location["lng"] as? CLLocationDegrees {
-//                    initialPos = CLLocationCoordinate2D(latitude: lat, longitude: lng)
-//                }
-                
-                let newMarker = addMarker(
-//                    at: initialPos,
-                    at: coordinate,
-                    on: mapView,
-                    isDriver: true
-                )
-                newMarker.rotation = bearing
-                newMarker.groundAnchor = CGPoint(x: 0.5, y: 0.5)
-                self.carMarker = newMarker
-                
-                print("🚗 Car marker created at: \(initialPos.latitude), \(initialPos.longitude), with initial bearing: \(bearing)°")
-            }
-        }
-        
-            // MARK: - Calculate Bearing
-        
+
         func calculateBearing(from origin: CLLocationCoordinate2D, to destination: CLLocationCoordinate2D) -> CLLocationDirection {
             let lat1 = origin.latitude.toRadians()
             let lon1 = origin.longitude.toRadians()
@@ -280,9 +251,8 @@ struct RideMapViewRepresentable: UIViewRepresentable {
                 print("❌ Failed to decode polyline or path has too few points.")
                 return
             }
-            
+
             let firstCoord = path.coordinate(at: 0)
-            let secondCoord = path.coordinate(at: 1)
             
             guard CLLocationCoordinate2DIsValid(firstCoord) else {
                 print("❌ Invalid start coordinate.")
@@ -300,35 +270,29 @@ struct RideMapViewRepresentable: UIViewRepresentable {
             upcomingRoutePolyline.geodesic = true
             upcomingRoutePolyline.map = mapView
             activePolyline = upcomingRoutePolyline
-            
-            let currentBearing = calculateBearing(from: firstCoord, to: secondCoord)
-//            let isFirstDraw = (carMarker == nil)
-//            
-//            let location = DriverLocationController.shared.driverLocation
-//            var driverPos: CLLocationCoordinate2D?
-//            if let lat = location["lat"] as? CLLocationDegrees,
-//               let lng = location["lng"] as? CLLocationDegrees {
-//                driverPos = CLLocationCoordinate2D(latitude: lat, longitude: lng)
-//            }
-            
-//            if !CLLocationCoordinate2DIsValid(firstCoord) {
-//                if let driverPos = driverPos {
-//                    placeOrAnimateCarMarker(at: driverPos, bearing: currentBearing, on: mapView)
-//                }
-//            } else {
-//                placeOrAnimateCarMarker(at: firstCoord, bearing: currentBearing, on: mapView)
-//            }
-            
-            // Prefer live driver location for the cab icon when available.
-            if let lat = parent.driverLocation.driverLocation["lat"] as? CLLocationDegrees,
-               let lng = parent.driverLocation.driverLocation["lng"] as? CLLocationDegrees {
-                placeOrAnimateCarMarker(
-                    at: CLLocationCoordinate2D(latitude: lat, longitude: lng),
-                    bearing: currentBearing,
-                    on: mapView
-                )
-            } else {
-                placeOrAnimateCarMarker(at: firstCoord, bearing: currentBearing, on: mapView)
+
+            let hadCarMarker = carMarker != nil
+            if !hadCarMarker {
+                var seedBearing: Float?
+                if path.count() >= 2 {
+                    seedBearing = Float(
+                        calculateBearing(from: path.coordinate(at: 0), to: path.coordinate(at: 1))
+                    )
+                }
+                if let lat = parent.driverLocation.driverLocation["lat"] as? CLLocationDegrees,
+                   let lng = parent.driverLocation.driverLocation["lng"] as? CLLocationDegrees {
+                    upsertTripDriver(
+                        coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lng),
+                        location: parent.driverLocation.driverLocation,
+                        seedBearing: seedBearing
+                    )
+                } else if let seedBearing {
+                    upsertTripDriver(
+                        coordinate: path.coordinate(at: 0),
+                        location: [:],
+                        seedBearing: seedBearing
+                    )
+                }
             }
             
             if let lastCoordinate = path.count() > 0 ? path.coordinate(at: path.count() - 1) : nil {
@@ -336,7 +300,7 @@ struct RideMapViewRepresentable: UIViewRepresentable {
                 print("📍 Drop-off marker placed at: \(lastCoordinate.latitude), \(lastCoordinate.longitude)")
             }
             
-            if carMarker == nil {
+            if !hadCarMarker {
                 let bounds = GMSCoordinateBounds(path: path)
                 let update = GMSCameraUpdate.fit(bounds, withPadding: 100)
                 mapView.moveCamera(update)
@@ -366,16 +330,14 @@ struct RideMapViewRepresentable: UIViewRepresentable {
         let mapView = GMSMapView(frame: .zero, camera: camera)
         configureMapSettings(mapView)
         context.coordinator.mapView = mapView
+        context.coordinator.bindCarMarkers(on: mapView)
         RideMapRecenterRegistry.shared.bind(coordinator: context.coordinator)
         
-        // ✅ Always draw the route if polyline data exists
-            if let encoded = polylineController.polyline["polyline"] as? String,
-               !encoded.isEmpty {
-                print("polyline-data: \(encoded)")
-                // Reset lastProcessedPolyline to ensure it draws
-                context.coordinator.lastProcessedPolyline = encoded
-                context.coordinator.drawRoute(encoded: encoded, on: mapView)
-            }
+        if let encoded = polylineController.polyline["polyline"] as? String,
+           !encoded.isEmpty {
+            context.coordinator.lastProcessedPolyline = encoded
+            context.coordinator.drawRoute(encoded: encoded, on: mapView)
+        }
         
         return mapView
     }
@@ -383,6 +345,7 @@ struct RideMapViewRepresentable: UIViewRepresentable {
     func updateUIView(_ uiView: GMSMapView, context: Context) {
         context.coordinator.parent = self
         context.coordinator.mapView = uiView
+        context.coordinator.bindCarMarkers(on: uiView)
         RideMapRecenterRegistry.shared.bind(coordinator: context.coordinator)
     }
 

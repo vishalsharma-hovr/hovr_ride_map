@@ -47,6 +47,7 @@ if command -v gh >/dev/null 2>&1; then
   if ! gh repo view "${GITHUB_OWNER}/${REPO_NAME}" >/dev/null 2>&1; then
     echo "Creating GitHub repository ${GITHUB_OWNER}/${REPO_NAME} ..."
     gh repo create "${GITHUB_OWNER}/${REPO_NAME}" --public --source=. --remote=origin --push
+    git push origin "$VERSION"
   else
     git remote add origin "$REMOTE_URL" 2>/dev/null || git remote set-url origin "$REMOTE_URL"
     git push -u origin main
