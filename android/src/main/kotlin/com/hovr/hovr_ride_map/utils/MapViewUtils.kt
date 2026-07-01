@@ -15,20 +15,32 @@ import java.util.Calendar
 import java.util.Locale
 
 object MapViewUtils {
+    fun isValidGoogleMapsApiKey(key: String?): Boolean {
+        val trimmed = key?.trim().orEmpty()
+        if (trimmed.isEmpty()) return false
+        if (trimmed.startsWith("$(") && trimmed.endsWith(")")) return false
+        if (trimmed.contains("YOUR_API_KEY", ignoreCase = true)) return false
+        return true
+    }
+
     fun googleApiKey(context: Context): String {
         return try {
             val appInfo = context.packageManager.getApplicationInfo(
                 context.packageName,
                 PackageManager.GET_META_DATA,
             )
-            appInfo.metaData?.getString("com.google.android.geo.API_KEY")
+            val raw = appInfo.metaData?.getString("com.google.android.geo.API_KEY")
                 ?.takeIf { it.isNotBlank() }
                 ?: appInfo.metaData?.getString("GOOGLE_MAPS_API_KEY").orEmpty()
+            if (isValidGoogleMapsApiKey(raw)) raw.trim() else ""
         } catch (e: Exception) {
             Log.e("MapViewUtils", "Failed to read Google Maps API key from manifest", e)
             ""
         }
     }
+
+    fun isGoogleMapsConfigured(context: Context): Boolean =
+        googleApiKey(context).isNotEmpty()
 
     fun createBitmapFromView(view: View): Bitmap {
         view.measure(

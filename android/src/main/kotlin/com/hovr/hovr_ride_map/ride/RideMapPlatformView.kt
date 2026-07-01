@@ -23,6 +23,7 @@ import androidx.lifecycle.LifecycleOwner
 import com.hovr.hovr_ride_map.shared.BearingSmoother
 import com.hovr.hovr_ride_map.RideViewChannelHub
 import com.google.android.gms.location.*
+import com.google.android.gms.tasks.CancellationTokenSource
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.MapView
@@ -30,7 +31,6 @@ import com.google.android.gms.maps.OnMapReadyCallback
 import com.google.android.gms.maps.model.*
 import com.google.android.gms.maps.model.BitmapDescriptor
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
-import com.google.maps.android.PolyUtil
 import com.google.maps.android.SphericalUtil
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodChannel
@@ -45,6 +45,9 @@ internal class RideMapPlatformView(
     private val mapMode: String? = null,
     private val savedInstanceState: Bundle? = null,
 ) : PlatformView, OnMapReadyCallback, DefaultLifecycleObserver {
+
+    private var currentTripStage: String? = mapMode
+    private var lastAppliedTripStage: String? = null
 
     private val mapView = MapView(context)
     private var googleMap: GoogleMap? = null
@@ -78,6 +81,7 @@ internal class RideMapPlatformView(
     private var lastDrawnPolyline: String? = null
 
     private var mapViewReady = false
+    private var pendingRecenterFit: String? = null
     private var shouldRestoreRoute = false
     private var hasRestoredRoute = false
     private var isAppInForeground = false
@@ -88,6 +92,10 @@ internal class RideMapPlatformView(
     private var followOffsetMeters = 60.0
     private var followTilt = 45f
     private var followZoom = 17f
+    private var lastDriverLatLng: LatLng? = null
+    private var lastDropoffLatLng: LatLng? = null
+    private var lastPickupLatLng: LatLng? = null
+    private var lastUserLatLng: LatLng? = null
 
     private val sharedPrefs by lazy {
         context.getSharedPreferences("MeetAtPickupSpotView", Context.MODE_PRIVATE)
@@ -99,7 +107,11 @@ internal class RideMapPlatformView(
 
     private val rideViewHandler = MethodChannel.MethodCallHandler { call, result ->
         when (call.method) {
-            "recenter-map" -> recenterMap(result)
+            "recenter-map" -> {
+                val arg = call.arguments as? Map<*, *>
+                val fit = arg?.get("fit") as? String
+                recenterMap(result, fit)
+            }
 
             "polylines-channel" -> {
                 Log.d(TAG, "=== POLYLINES-CHANNEL CALLED ===")
@@ -127,9 +139,51 @@ internal class RideMapPlatformView(
                 val driverLng = arg?.get("lng") as? Double
 
                 if (driverLat != null && driverLng != null) {
+                    onMain {
+                        val position = LatLng(driverLat, driverLng)
+                        lastDriverLatLng = position
+                        val marker = carMarker ?: startMarker
+                        marker?.position = position
+                    }
                     result.success("Location received successfully!")
                 } else {
                     result.error("INVALID_LOCATION", "Driver location missing", null)
+                }
+            }
+
+            "drop-off-location" -> {
+                val arg = call.arguments as? Map<*, *>
+                val lat = arg?.get("lat") as? Double
+                val lng = arg?.get("lng") as? Double
+                if (lat != null && lng != null) {
+                    lastDropoffLatLng = LatLng(lat, lng)
+                    result.success(null)
+                } else {
+                    result.error("INVALID_ARGS", "Missing dropoff lat/lng", null)
+                }
+            }
+
+            "pickup-location" -> {
+                val arg = call.arguments as? Map<*, *>
+                val lat = arg?.get("lat") as? Double
+                val lng = arg?.get("lng") as? Double
+                if (lat != null && lng != null) {
+                    lastPickupLatLng = LatLng(lat, lng)
+                    result.success(null)
+                } else {
+                    result.error("INVALID_ARGS", "Missing pickup lat/lng", null)
+                }
+            }
+
+            "user-location" -> {
+                val arg = call.arguments as? Map<*, *>
+                val lat = arg?.get("lat") as? Double
+                val lng = arg?.get("lng") as? Double
+                if (lat != null && lng != null) {
+                    lastUserLatLng = LatLng(lat, lng)
+                    result.success(null)
+                } else {
+                    result.error("INVALID_ARGS", "Missing user lat/lng", null)
                 }
             }
 
@@ -145,6 +199,22 @@ internal class RideMapPlatformView(
                 currentPolylineIndex = 0
 
                 clearMapElements()
+                result.success(null)
+            }
+
+            "trip-stage" -> {
+                val arg = call.arguments as? Map<*, *>
+                val stage = arg?.get("tripStage") as? String
+                if (stage.isNullOrEmpty()) {
+                    result.error("INVALID_ARGS", "Missing tripStage", null)
+                    return@MethodCallHandler
+                }
+                if (stage == currentTripStage) {
+                    result.success(null)
+                    return@MethodCallHandler
+                }
+                currentTripStage = stage
+                applyTripStage(stage)
                 result.success(null)
             }
 
@@ -305,6 +375,8 @@ internal class RideMapPlatformView(
                 } else {
                     Log.d(TAG, "No route to draw after layout")
                 }
+
+                flushPendingRecenter()
             }
         }
     }
@@ -391,91 +463,6 @@ internal class RideMapPlatformView(
         }
     }
 
-    private fun sanitizeEncoded(input: String): String {
-        var s = input.trim()
-        if (s.contains("\\\\")) s = s.replace("\\\\", "\\")
-        if (s.length > 1 && ((s.first() == '"' && s.last() == '"') || (s.first() == '\'' && s.last() == '\''))) {
-            s = s.substring(1, s.length - 1)
-        }
-        return s
-    }
-
-    private fun decodePolyline(encoded: String, precision: Int): List<LatLng> {
-        val factor = Math.pow(10.0, precision.toDouble())
-        var index = 0
-        val len = encoded.length
-        var lat = 0
-        var lng = 0
-        val path = ArrayList<LatLng>()
-
-        try {
-            while (index < len) {
-                var result = 0
-                var shift = 0
-                var b: Int
-                do {
-                    if (index >= len) return path
-                    b = encoded[index++].code - 63
-                    result = result or ((b and 0x1f) shl shift)
-                    shift += 5
-                } while (b >= 0x20)
-                val dlat = if ((result and 1) != 0) (result shr 1).inv() else (result shr 1)
-                lat += dlat
-
-                result = 0
-                shift = 0
-                do {
-                    if (index >= len) return path
-                    b = encoded[index++].code - 63
-                    result = result or ((b and 0x1f) shl shift)
-                    shift += 5
-                } while (b >= 0x20)
-                val dlng = if ((result and 1) != 0) (result shr 1).inv() else (result shr 1)
-                lng += dlng
-
-                path.add(LatLng(lat / factor, lng / factor))
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "decodePolyline error: ${e.message}")
-            return path
-        }
-        return path
-    }
-
-    private fun isPlausible(points: List<LatLng>): Boolean {
-        if (points.size < 2) return false
-        var prev = points.first()
-        var bad = 0
-        for (i in 1 until minOf(points.size, 10)) {
-            val cur = points[i]
-            val d = SphericalUtil.computeDistanceBetween(prev, cur)
-            if (d > 5_000) bad++
-            prev = cur
-        }
-        return bad <= 1
-    }
-
-    private fun safeDecodeAny(encodedRaw: String): List<LatLng> {
-        val encoded = sanitizeEncoded(encodedRaw)
-        if (encoded.isEmpty()) return emptyList()
-
-        val custom5 = decodePolyline(encoded, 5)
-        if (custom5.isNotEmpty()) return custom5
-
-        val p5 = try {
-            PolyUtil.decode(encoded)
-        } catch (e: Throwable) {
-            emptyList()
-        }
-
-        if (p5.isNotEmpty() && isPlausible(p5)) return p5
-
-        val custom6 = decodePolyline(encoded, 6)
-        if (custom6.isNotEmpty()) return custom6
-
-        return emptyList()
-    }
-
     private fun markerIconFromDrawable(ctx: Context, resId: Int, sizeDp: Int): BitmapDescriptor {
         val sizePx = (sizeDp * ctx.resources.displayMetrics.density).toInt().coerceAtLeast(1)
         val src = BitmapFactory.decodeResource(ctx.resources, resId) ?: error("Drawable not found")
@@ -517,7 +504,7 @@ internal class RideMapPlatformView(
         }
 
         val decodedPath = try {
-            safeDecodeAny(polyline)
+            RideMapPolylineDecoder.safeDecodeAny(polyline)
         } catch (e: Exception) {
             Log.e(TAG, "Decode failed: ${e.message}")
             emptyList()
@@ -690,18 +677,43 @@ internal class RideMapPlatformView(
             }
         } else {
             Log.d(TAG, "No route")
-            moveToUserLocation()
+        }
+
+        when (val stage = currentTripStage) {
+            null -> if (routeToDraw.isNullOrEmpty()) moveToUserLocation()
+            else -> applyTripStage(stage)
+        }
+    }
+
+    private fun applyTripStage(stage: String) {
+        if (stage == lastAppliedTripStage) return
+        lastAppliedTripStage = stage
+        onMain {
+            when {
+                RideMapStageApplier.prefersRouteCamera(stage) && polylinePoints.isNotEmpty() -> {
+                    followStartMarker()
+                }
+
+                polylinePoints.isNotEmpty() && startMarker != null -> {
+                    followStartMarker()
+                }
+
+                else -> {
+                    moveToUserLocation(zoom = RideMapStageApplier.defaultZoom(stage))
+                }
+            }
+            Log.d(TAG, "Applied trip stage: $stage")
         }
     }
 
     @SuppressLint("MissingPermission")
-    private fun moveToUserLocation() {
+    private fun moveToUserLocation(zoom: Float = 15f) {
         if (!hasPermission()) return
 
         fusedLocationClient.lastLocation.addOnSuccessListener { location ->
-            if (location != null && !hasMovedCamera) {
+            if (location != null) {
                 val pos = LatLng(location.latitude, location.longitude)
-                googleMap?.moveCamera(CameraUpdateFactory.newLatLngZoom(pos, 15f))
+                googleMap?.animateCamera(CameraUpdateFactory.newLatLngZoom(pos, zoom))
                 hasMovedCamera = true
                 val icon = getUserIcon(currentIconSizeDp.takeIf { it > 0 }
                     ?: calculateSizeForZoom(googleMap?.cameraPosition?.zoom ?: 12f))
@@ -737,37 +749,92 @@ internal class RideMapPlatformView(
         // Minimal implementation
     }
 
+    private fun buildRecenterState() = RideMapRecenter.State(
+        lastDriverLatLng = lastDriverLatLng,
+        carPosition = carMarker?.position,
+        startPosition = startMarker?.position,
+        destPosition = destMarker?.position,
+        lastDropoffLatLng = lastDropoffLatLng,
+        lastPickupLatLng = lastPickupLatLng,
+        lastUserLatLng = lastUserLatLng,
+        polylinePoints = polylinePoints,
+        followZoom = followZoom,
+    )
+
+    private fun performRecenter(fit: String?): Boolean {
+        val map = googleMap ?: return false
+        if (!mapViewReady) return false
+
+        val mapWidth = mapView.width
+        val mapHeight = mapView.height
+        val state = buildRecenterState()
+
+        if (RideMapRecenter.applyFit(map, fit, state, mapWidth, mapHeight)) {
+            return true
+        }
+        if (fit != null && RideMapRecenter.fitFullPolyline(map, state, mapWidth, mapHeight)) {
+            return true
+        }
+        if (fit == null && RideMapRecenter.fitPolylineStart(map, state)) {
+            return true
+        }
+        return false
+    }
+
+    private fun flushPendingRecenter() {
+        val fit = pendingRecenterFit ?: return
+        pendingRecenterFit = null
+        if (!performRecenter(fit) && hasPermission()) {
+            recenterToUserGpsFallback()
+        }
+    }
+
     @SuppressLint("MissingPermission")
-    private fun recenterMap(result: MethodChannel.Result) {
+    private fun recenterToUserGpsFallback() {
+        if (!hasPermission()) return
+
+        fusedLocationClient.lastLocation.addOnSuccessListener { cached ->
+            if (cached != null) {
+                val pos = LatLng(cached.latitude, cached.longitude)
+                googleMap?.animateCamera(CameraUpdateFactory.newLatLngZoom(pos, 16f))
+                return@addOnSuccessListener
+            }
+
+            fusedLocationClient.getCurrentLocation(
+                Priority.PRIORITY_HIGH_ACCURACY,
+                CancellationTokenSource().token,
+            ).addOnSuccessListener { location ->
+                location?.let {
+                    val pos = LatLng(it.latitude, it.longitude)
+                    googleMap?.animateCamera(CameraUpdateFactory.newLatLngZoom(pos, 16f))
+                }
+            }
+        }
+    }
+
+    private fun recenterMap(result: MethodChannel.Result, fit: String? = null) {
         onMain {
             val map = googleMap
-            if (map != null && polylinePoints.isNotEmpty()) {
-                val firstPoint = polylinePoints.first()
-                map.animateCamera(CameraUpdateFactory.newLatLngZoom(firstPoint, followZoom))
+            if (map == null || !mapViewReady) {
+                pendingRecenterFit = fit
                 result.success(null)
                 return@onMain
             }
-        }
 
-        if (!hasPermission()) {
-            result.error("NO_PERM", "Location permission not granted", null)
-            return
-        }
-
-        val singleRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 0L)
-            .setMaxUpdates(1)
-            .build()
-
-        fusedLocationClient.requestLocationUpdates(singleRequest, object : LocationCallback() {
-            override fun onLocationResult(r: LocationResult) {
-                r.lastLocation?.let {
-                    googleMap?.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(it.latitude, it.longitude), 16f))
-                }
-                fusedLocationClient.removeLocationUpdates(this)
+            if (performRecenter(fit)) {
+                pendingRecenterFit = null
+                result.success(null)
+                return@onMain
             }
-        }, mainLooper)
 
-        result.success(null)
+            if (!hasPermission()) {
+                result.error("NO_PERM", "Location permission not granted", null)
+                return@onMain
+            }
+
+            recenterToUserGpsFallback()
+            result.success(null)
+        }
     }
 
     private fun calculateSizeForZoom(zoom: Float): Int = when {

@@ -27,11 +27,35 @@ class RideMapController {
   static final RideMapController shared = RideMapController();
 
   Future<void> recenter({bool meetAtPickup = false}) async {
-    if (Platform.isIOS && !meetAtPickup) {
+    if (meetAtPickup) {
+      await recenterDriverToPickup();
+      return;
+    }
+    if (Platform.isIOS) {
       await _safeInvoke(_globalChannel, 'recenter-map');
       return;
     }
     await _safeInvoke(_rideViewChannel, 'recenter-map');
+  }
+
+  /// Fits the camera to show the driver's current position and the trip
+  /// destination — same behavior as [recenterRoutePreview] during in-trip navigation.
+  Future<void> recenterDriverToDestination() async {
+    await _recenterWithFit('driverToDestination');
+  }
+
+  /// Fits the camera to show the driver's current position and the pickup spot.
+  Future<void> recenterDriverToPickup() async {
+    await _recenterWithFit('driverToPickup');
+  }
+
+  Future<void> _recenterWithFit(String fit) async {
+    final args = <String, Object>{'fit': fit};
+    await _safeInvoke(_rideViewChannel, 'recenter-map', arguments: args);
+    if (Platform.isIOS) {
+      // iOS polyline/driver updates use global_channel; recenter uses it too for reliability.
+      await _safeInvoke(_globalChannel, 'recenter-map', arguments: args);
+    }
   }
 
   Future<void> recenterRoutePreview() async {
@@ -42,7 +66,7 @@ class RideMapController {
     final payload = <String, Object>{
       'lat': position.latitude,
       'lng': position.longitude,
-      if (bearing != null) 'bearing': bearing,
+      'bearing': ?bearing,
     };
     if (Platform.isIOS) {
       await _safeInvoke(_globalChannel, 'driver-location-channel', arguments: payload);
@@ -154,8 +178,15 @@ class RideMapController {
   }) async {
     try {
       await channel.invokeMethod(method, arguments);
-    } on MissingPluginException {
-      // No platform-view handler currently registered — expected during transitions.
+    } on MissingPluginException catch (error, stackTrace) {
+      if (method == 'recenter-map') {
+        log(
+          'RideMapController: no native ride map handler for recenter — stop and full-rebuild the app',
+          name: 'RideMapController',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
     } on PlatformException catch (error, stackTrace) {
       log(
         'RideMapController platform error for $method: ${error.message}',

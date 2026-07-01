@@ -6,24 +6,24 @@ package com.hovr.hovr_ride_map.home
  * ───────────────────────────────────────────────────────────────
  * • Re-centers on demand  through    channel: "ride-view-channel"
  * • Draws / updates driver markers through "show-drivers-location-on-map"
- * • Tracks device location continuously via LocationManager
+ * • Native blue-dot via isMyLocationEnabled (SDK-managed)
+ * • Tracks device location via LocationManager for camera first-fix / recenter
  * • Keeps first-fix zoom logic and user-gesture detection
  * ───────────────────────────────────────────────────────────────
  */
 
-
+import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.location.Location
 import android.util.Log
 import android.view.View
-import androidx.lifecycle.DefaultLifecycleObserver
-import androidx.lifecycle.LifecycleOwner
+import androidx.core.app.ActivityCompat
+import com.hovr.hovr_ride_map.R
 import com.hovr.hovr_ride_map.RideViewChannelHub
-import com.hovr.hovr_ride_map.home.HomeMapMarkerManager
-import com.hovr.hovr_ride_map.home.LocationManager
-import com.google.android.gms.maps.*
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.MapView
@@ -34,28 +34,24 @@ import com.google.android.gms.maps.model.LatLng
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.platform.PlatformView
-import com.hovr.hovr_ride_map.R
 
 internal class HomeMapPlatformView(
     private val ctx: Context,
     messenger: BinaryMessenger
 ) : PlatformView,
-    OnMapReadyCallback,
-    DefaultLifecycleObserver {
+    OnMapReadyCallback {
 
     /* -------- native view -------- */
     private val mapView = MapView(ctx)
 
     /* -------- collaborators -------- */
     private val locationManager = LocationManager(ctx)
-    private val markerManager = HomeMapMarkerManager(ctx) // for USER dot/starting marker
 
     /* -------- state -------- */
     private var googleMap: GoogleMap? = null
     private var firstFix = true
     private var carMarkers: CarMarkers? = null
 
-    // FIX: Add flags to handle race conditions
     private var isMapReady = false
     private var pendingDriverUpdates: List<CarFix>? = null
 
@@ -82,12 +78,39 @@ internal class HomeMapPlatformView(
         initMapView()
         registerWithStack()
         initLocationUpdates()
+        setupMapViewLifecycle()
     }
 
     /* ───────────────────────── MapView setup ───────────────────────── */
     private fun initMapView() {
-        mapView.onCreate(null)               // no Bundle in PlatformViews
+        mapView.onCreate(null)
         mapView.getMapAsync(this)
+    }
+
+    private fun setupMapViewLifecycle() {
+        mapView.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) {
+                Log.d(TAG, "View attached")
+                try {
+                    mapView.onStart()
+                    mapView.onResume()
+                    locationManager.resumeTracking()
+                    enableMyLocationLayer()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error resuming map view: ${e.message}")
+                }
+            }
+
+            override fun onViewDetachedFromWindow(v: View) {
+                Log.d(TAG, "View detached")
+                try {
+                    mapView.onPause()
+                    mapView.onStop()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error pausing map view: ${e.message}")
+                }
+            }
+        })
     }
 
     override fun onMapReady(map: GoogleMap) {
@@ -101,21 +124,32 @@ internal class HomeMapPlatformView(
                 }
             }
         }
-        // Initialize the animator once the map is ready
+
         carMarkers = CarMarkers(map, getScaledCarIcon())
-
         isMapReady = true
+        enableMyLocationLayer()
 
-        // FIX: Process any pending driver updates that arrived before map was ready
         pendingDriverUpdates?.let { fixes ->
             Log.d(TAG, "Processing ${fixes.size} pending driver updates")
             val nowMono = android.os.SystemClock.elapsedRealtime()
             carMarkers?.upsert(fixes, nowMono)
             pendingDriverUpdates = null
         }
-        // Start device location tracking (for your user dot)
+
         locationManager.enableLocationTracking()
     }
+
+    @SuppressLint("MissingPermission")
+    private fun enableMyLocationLayer() {
+        if (!hasLocationPermission()) return
+        googleMap?.isMyLocationEnabled = true
+    }
+
+    private fun hasLocationPermission(): Boolean =
+        ActivityCompat.checkSelfPermission(
+            ctx,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
 
     /* ───────────────────────── Flutter channels ───────────────────────── */
     private fun registerChannels() {
@@ -140,15 +174,12 @@ internal class HomeMapPlatformView(
                         val fixes = parseNearbyDrivers(nearby)
                         Log.d(TAG, "Received ${fixes.size} drivers, mapReady=$isMapReady")
 
-                        // FIX: Check if map is ready before updating
                         if (isMapReady && carMarkers != null) {
-                            // Map is ready, update immediately
                             mapView.post {
                                 val nowMono = android.os.SystemClock.elapsedRealtime()
                                 carMarkers?.upsert(fixes, nowMono)
                             }
                         } else {
-                            // FIX: Map not ready yet, queue the update
                             Log.d(TAG, "Map not ready, queuing ${fixes.size} driver updates")
                             pendingDriverUpdates = fixes
                         }
@@ -163,7 +194,6 @@ internal class HomeMapPlatformView(
                 else -> result.notImplemented()
             }
         }
-
     }
 
     private fun clearChannels() {
@@ -201,9 +231,6 @@ internal class HomeMapPlatformView(
         val pos = LatLng(location.latitude, location.longitude)
 
         googleMap?.let { map ->
-            // USER marker (your own manager)
-            markerManager.updateStartingMarker(map, pos)
-
             if (firstFix) {
                 map.animateCamera(CameraUpdateFactory.newLatLngZoom(pos, 16.5f))
                 firstFix = false
@@ -234,7 +261,6 @@ internal class HomeMapPlatformView(
     /* ───────────────────────── PlatformView contract ───────────────────────── */
     override fun getView(): View = mapView
 
-
     override fun dispose() {
         Log.d(TAG, "Disposing HomeViewGoogleMap")
         unregisterFromStack()
@@ -242,19 +268,7 @@ internal class HomeMapPlatformView(
         pendingDriverUpdates = null
         carMarkers = null
         locationManager.dispose()
-        markerManager.dispose()
         mapView.onDestroy()
-    }
-
-    /* ───────────────────────── Lifecycle hooks (optional) ───────────────────────── */
-    override fun onResume(owner: LifecycleOwner) {
-        Log.d(TAG, "onResume")
-        mapView.onResume()
-    }
-
-    override fun onPause(owner: LifecycleOwner) {
-        Log.d(TAG, "onPause")
-        mapView.onPause()
     }
 
     companion object {

@@ -1,0 +1,32 @@
+PODS:
+  - Flutter (1.0.0)
+  - GoogleMaps (10.10.0):
+    - GoogleMaps/Maps (= 10.10.0)
+  - GoogleMaps/Maps (10.10.0)
+  - hovr_ride_map (1.0.0):
+    - Flutter
+    - GoogleMaps (>= 9.0)
+
+DEPENDENCIES:
+  - Flutter (from `Flutter`)
+  - GoogleMaps (= 10.10.0)
+  - hovr_ride_map (from `.symlinks/plugins/hovr_ride_map/ios`)
+
+SPEC REPOS:
+  trunk:
+    - GoogleMaps
+
+EXTERNAL SOURCES:
+  Flutter:
+    :path: Flutter
+  hovr_ride_map:
+    :path: ".symlinks/plugins/hovr_ride_map/ios"
+
+SPEC CHECKSUMS:
+  Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  GoogleMaps: 133ba5beb4979592001a6cd0125a502243439ff9
+  hovr_ride_map: 2855d3d53c3cd900e6abe93e4065ad316e4284cf
+
+PODFILE CHECKSUM: bbccd666e25ef40f308af6bb42b7bebd62dfa20d
+
+COCOAPODS: 1.16.2

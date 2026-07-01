@@ -14,7 +14,9 @@ class HomeMapPlatformViewFactory(
     private val messenger: BinaryMessenger,
 ) : PlatformViewFactory(StandardMessageCodec.INSTANCE) {
     override fun create(context: Context, viewId: Int, args: Any?): PlatformView {
-        return HomeMapPlatformView(context, messenger)
+        return MissingGoogleMapsApiKeyPlatformView.createOrMap(context) {
+            HomeMapPlatformView(context, messenger)
+        }
     }
 }
 
@@ -23,7 +25,9 @@ class RideMapPlatformViewFactory(
 ) : PlatformViewFactory(StandardMessageCodec.INSTANCE) {
     override fun create(context: Context, viewId: Int, args: Any?): PlatformView {
         val mode = (args as? Map<*, *>)?.get("mode") as? String
-        return RideMapPlatformView(context, messenger, mapMode = mode)
+        return MissingGoogleMapsApiKeyPlatformView.createOrMap(context) {
+            RideMapPlatformView(context, messenger, mapMode = mode)
+        }
     }
 }
 
@@ -33,6 +37,8 @@ class RoutePreviewPlatformViewFactory(
 ) : PlatformViewFactory(StandardMessageCodec.INSTANCE) {
     override fun create(context: Context, viewId: Int, args: Any?): PlatformView {
         val argsMap = args as? Map<*, *> ?: emptyMap<String, Any?>()
-        return RoutePreviewPlatformView(context, messenger, argsMap, origin)
+        return MissingGoogleMapsApiKeyPlatformView.createOrMap(context) {
+            RoutePreviewPlatformView(context, messenger, argsMap, origin)
+        }
     }
 }

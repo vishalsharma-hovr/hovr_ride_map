@@ -38,14 +38,19 @@ internal class LocationManager(private val context: Context) {
     fun enableLocationTracking() {
         if (!hasLocationPermission()) return
 
-        val locationRequest = LocationRequest.Builder(
-            Priority.PRIORITY_BALANCED_POWER_ACCURACY,
-            15000L
-        ).build()
+        val callback = locationCallback ?: return
+        fusedLocationClient.removeLocationUpdates(callback)
 
-        locationCallback?.let { callback ->
-            fusedLocationClient.requestLocationUpdates(locationRequest, callback, mainLooper)
-        }
+        val locationRequest = LocationRequest.Builder(
+            Priority.PRIORITY_HIGH_ACCURACY,
+            4000L,
+        ).setMinUpdateIntervalMillis(3000L).build()
+
+        fusedLocationClient.requestLocationUpdates(locationRequest, callback, mainLooper)
+    }
+
+    fun resumeTracking() {
+        enableLocationTracking()
     }
 
     @SuppressLint("MissingPermission")
