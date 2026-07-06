@@ -62,7 +62,11 @@ final class GoogleMapsPlugin: NSObject, RideViewChannelHandler {
                 result(FlutterError(code: "INVALID_ARGS", message: "Missing 'polyline'", details: nil))
                 return
             }
+            let force = args["force"] as? Bool ?? false
             DispatchQueue.main.async {
+                if force {
+                    GoogleMapsPlugin.routePolylineController.clearPolyline()
+                }
                 GoogleMapsPlugin.routePolylineController.polyline = ["polyline": polylineString]
             }
             result(nil)
@@ -94,6 +98,17 @@ final class GoogleMapsPlugin: NSObject, RideViewChannelHandler {
                 if TripStageController.shared.tripStage != stage {
                     TripStageController.shared.tripStage = stage
                 }
+                if stage == "headingToDestination" {
+                    TripPickupController.shared.clear()
+                    TripUserController.shared.clear()
+                }
+            }
+            result(nil)
+
+        case "clear-pickup-user-markers":
+            DispatchQueue.main.async {
+                TripPickupController.shared.clear()
+                TripUserController.shared.clear()
             }
             result(nil)
 
@@ -133,6 +148,17 @@ final class GoogleMapsPlugin: NSObject, RideViewChannelHandler {
             }
             DispatchQueue.main.async {
                 TripDropoffController.shared.update(lat: lat, lng: lng)
+            }
+            result(nil)
+
+        case "trip-stops":
+            guard let args = call.arguments as? [String: Any],
+                  let stops = args["stops"] as? [[String: Any]] else {
+                result(FlutterError(code: "INVALID_ARGS", message: "Missing stops list", details: nil))
+                return
+            }
+            DispatchQueue.main.async {
+                TripStopsController.shared.update(rawStops: stops)
             }
             result(nil)
 

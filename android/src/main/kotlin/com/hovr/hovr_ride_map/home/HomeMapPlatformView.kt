@@ -24,6 +24,8 @@ import android.view.View
 import androidx.core.app.ActivityCompat
 import com.hovr.hovr_ride_map.R
 import com.hovr.hovr_ride_map.RideViewChannelHub
+import com.hovr.hovr_ride_map.shared.HovrCarIcon
+import com.hovr.hovr_ride_map.shared.MapChromePolicy
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.MapView
@@ -31,15 +33,20 @@ import com.google.android.gms.maps.OnMapReadyCallback
 import com.google.android.gms.maps.model.BitmapDescriptor
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.MapStyleOptions
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.platform.PlatformView
 
 internal class HomeMapPlatformView(
     private val ctx: Context,
-    messenger: BinaryMessenger
+    messenger: BinaryMessenger,
+    creationParams: Map<*, *>? = null,
 ) : PlatformView,
     OnMapReadyCallback {
+
+    private val initialLatitude = creationParams?.get("initialLatitude") as? Double
+    private val initialLongitude = creationParams?.get("initialLongitude") as? Double
 
     /* -------- native view -------- */
     private val mapView = MapView(ctx)
@@ -124,6 +131,12 @@ internal class HomeMapPlatformView(
                 }
             }
         }
+        MapChromePolicy.apply(map)
+        try {
+            map.setMapStyle(MapStyleOptions.loadRawResourceStyle(mapView.context, R.raw.hovr_maps_style))
+        } catch (e: Exception) {
+            Log.e(TAG, "Map style failed: ${e.message}")
+        }
 
         carMarkers = CarMarkers(map, getScaledCarIcon())
         isMapReady = true
@@ -136,7 +149,18 @@ internal class HomeMapPlatformView(
             pendingDriverUpdates = null
         }
 
-        locationManager.enableLocationTracking()
+        val hasInitialCoords = initialLatitude != null && initialLongitude != null &&
+            (initialLatitude != 0.0 || initialLongitude != 0.0)
+        if (hasInitialCoords) {
+            val pos = LatLng(initialLatitude!!, initialLongitude!!)
+            map.moveCamera(CameraUpdateFactory.newLatLngZoom(pos, 16.5f))
+            firstFix = false
+        }
+
+        locationManager.getCurrentLocation { loc ->
+            loc?.let { updateLocationOnMap(it) }
+            locationManager.enableLocationTracking()
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -249,14 +273,8 @@ internal class HomeMapPlatformView(
     }
 
     /* ───────────────────────── Helpers ───────────────────────── */
-    private fun getScaledCarIcon(): BitmapDescriptor {
-        val sizeDp = 32f
-        val px = (sizeDp * mapView.resources.displayMetrics.density).toInt()
-        val bmp = BitmapFactory.decodeResource(mapView.resources, R.drawable.ic_car)
-        val scaled: Bitmap =
-            if (bmp.width == px && bmp.height == px) bmp else Bitmap.createScaledBitmap(bmp, px, px, true)
-        return BitmapDescriptorFactory.fromBitmap(scaled)
-    }
+    private fun getScaledCarIcon(): BitmapDescriptor =
+        HovrCarIcon.bitmapDescriptor(mapView.context)
 
     /* ───────────────────────── PlatformView contract ───────────────────────── */
     override fun getView(): View = mapView

@@ -75,13 +75,24 @@ class RideMapController {
     await _safeInvoke(_rideViewChannel, 'driver-location-update', arguments: payload);
   }
 
-  Future<void> setRoutePolyline(String encodedPolyline) async {
-    final payload = {'polyline': encodedPolyline};
+  Future<void> setRoutePolyline(String encodedPolyline, {bool force = false}) async {
+    final payload = <String, Object>{
+      'polyline': encodedPolyline,
+      if (force) 'force': true,
+    };
     if (Platform.isIOS) {
       await _safeInvoke(_globalChannel, 'polylines-channel', arguments: payload);
       return;
     }
     await _safeInvoke(_rideViewChannel, 'polylines-channel', arguments: payload);
+  }
+
+  /// Removes pickup and rider pins from the in-trip map (heading stage).
+  Future<void> clearPickupAndUserMarkers() async {
+    await _safeInvoke(_rideViewChannel, 'clear-pickup-user-markers');
+    if (Platform.isIOS) {
+      await _safeInvoke(_globalChannel, 'clear-pickup-user-markers');
+    }
   }
 
   Future<void> clearRoute() async {
@@ -106,6 +117,14 @@ class RideMapController {
       _rideViewChannel,
       'trip-stage',
       arguments: {'tripStage': mode.wireValue},
+    );
+  }
+
+  Future<void> setTripStops(List<Map<String, Object?>> stops) async {
+    await _safeInvoke(
+      _rideViewChannel,
+      'trip-stops',
+      arguments: {'stops': stops},
     );
   }
 

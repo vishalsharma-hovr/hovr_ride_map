@@ -74,7 +74,11 @@ class GlobalFlutterBridge: NSObject {
                 return
             }
             print("🛰️ [Bridge] Received polyline data from Flutter: \(args)")
+            let force = args["force"] as? Bool ?? false
             DispatchQueue.main.async {
+                if force {
+                    PolylineController.shared.clearPolyline()
+                }
                 PolylineController.shared.polyline = args
             }
             result("ok")
@@ -82,6 +86,12 @@ class GlobalFlutterBridge: NSObject {
             print("🛰️ [Bridge] Received clear route command from Flutter:")
             DispatchQueue.main.async {
                 PolylineController.shared.clearPolyline()
+            }
+            result("ok")
+        case "clear-pickup-user-markers":
+            DispatchQueue.main.async {
+                TripPickupController.shared.clear()
+                TripUserController.shared.clear()
             }
             result("ok")
         default:

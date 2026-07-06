@@ -27,6 +27,7 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
     @State var startPoint: LatLng?
     @State var endPoint: LatLng?
     @State var routeFetcher :[String:Any]
+    var stops: [RouteStopLocation] = []
     
     @State private var updateTimer: Timer?
     @State private var travelDurationSeconds: Int = 0
@@ -36,7 +37,7 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
         Coordinator(parent: self)
     }
 
-    final class Coordinator {
+    final class Coordinator: NSObject, GMSMapViewDelegate {
         var hasDrawnRoute = false
         var parent: GoogleMapsWithRouteViewController
         weak var mapView: GMSMapView?
@@ -65,6 +66,19 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
                     controller.shouldRecenter = false
                 }
         }
+
+        func mapView(_ mapView: GMSMapView, didTap marker: GMSMarker) -> Bool {
+            true
+        }
+
+        func mapView(
+            _ mapView: GMSMapView,
+            didTapPOIWithPlaceID placeID: String,
+            name: String,
+            location: CLLocationCoordinate2D
+        ) -> Bool {
+            true
+        }
     }
 
     func makeUIView(context: Context) -> GMSMapView {
@@ -73,6 +87,8 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
         }
         let camera = GMSCameraPosition.camera(withLatitude: origin.latitude, longitude: origin.longitude, zoom: zoom)
         let mapView = GMSMapView.map(withFrame: CGRect.zero, camera: camera)
+        mapView.delegate = context.coordinator
+        MapChromePolicy.apply(to: mapView)
         // Enable zoom, scroll, and other gesture settings
         mapView.settings.zoomGestures = true
         mapView.settings.scrollGestures = true
@@ -159,6 +175,7 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
             customMarkerView.view.backgroundColor = .clear
             customMarkerView.view.frame = CGRect(x: 0, y: 0, width: 20, height: 20)
             gmsMarker.iconView = customMarkerView.view
+            gmsMarker.isTappable = false
             gmsMarker.map = mapView
         }
 
@@ -184,6 +201,32 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
         return bearing
     }
 
+    private func addStopMarkers(on mapView: GMSMapView) {
+        for stop in stops {
+            let stopLabel = "Stop \(stop.index)"
+            let markerAddress = stop.address.isEmpty ? stopLabel : stop.address
+            let markerView = StopTaggedMarkerView(stopLabel: stopLabel, address: markerAddress)
+            let host = UIHostingController(rootView: markerView)
+            host.view.backgroundColor = .clear
+            host.view.isUserInteractionEnabled = true
+            host.view.frame = CGRect(
+                x: 0,
+                y: 0,
+                width: UIScreen.screenWidth - 20,
+                height: 48
+            )
+
+            let marker = GMSMarker(position: stop.coordinate)
+            marker.iconView = host.view
+            marker.groundAnchor = CGPoint(x: 0.0999, y: 0.53)
+            marker.tracksViewChanges = true
+            marker.title = markerAddress
+            marker.isTappable = false
+            marker.map = mapView
+            print("📍 Stop marker \(stop.index) at \(stop.coordinate.latitude), \(stop.coordinate.longitude)")
+        }
+    }
+
     func updateCameraPosition(mapView: GMSMapView, origin: CLLocationCoordinate2D, destination: CLLocationCoordinate2D) {
         let originCL = CLLocation(latitude: origin.latitude, longitude: origin.longitude)
         let destinationCL = CLLocation(latitude: destination.latitude, longitude: destination.longitude)
@@ -197,6 +240,9 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
             var bounds = GMSCoordinateBounds()
             bounds = bounds.includingCoordinate(origin)
             bounds = bounds.includingCoordinate(destination)
+            for stop in stops {
+                bounds = bounds.includingCoordinate(stop.coordinate)
+            }
 
             let cameraUpdate = GMSCameraUpdate.fit(bounds, withPadding: 120)
             mapView.animate(with: cameraUpdate)
@@ -258,6 +304,11 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
         }
     }
     
+    private func pickupEtaMinutes(fromSecondsText text: String) -> String {
+        guard let seconds = Int(text), seconds > 0 else { return "1" }
+        return String(max(Int((Double(seconds) / 60.0).rounded()), 1))
+    }
+
     private func drawRoute(from origin: CLLocationCoordinate2D, to destination: CLLocationCoordinate2D, on mapView: GMSMapView) {
         // print("🔍 routeFetcher raw value:", routeFetcher)
         // print("🧩 Type of routeFetcher:", type(of: routeFetcher))
@@ -306,6 +357,7 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
             routePolyline.strokeWidth = 4.0
             routePolyline.strokeColor = UIColor(red: 74/255, green: 171/255, blue: 36/255, alpha: 1)
             routePolyline.map = mapView
+            self.addStopMarkers(on: mapView)
         }
 
         
@@ -320,6 +372,11 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
         var bounds = GMSCoordinateBounds()
         for i in 0..<path.count() {
             bounds = bounds.includingCoordinate(path.coordinate(at: i))
+        }
+        bounds = bounds.includingCoordinate(origin)
+        bounds = bounds.includingCoordinate(destination)
+        for stop in stops {
+            bounds = bounds.includingCoordinate(stop.coordinate)
         }
         let update = GMSCameraUpdate.fit(bounds, withPadding: 80)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -369,38 +426,36 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
                 updateCameraPosition(mapView: mapView, origin: origin, destination: destination)
             }
         }
-        
-        reverseGeocode(coordinate: origin) { _ in
-            DispatchQueue.main.async {
-                guard path.count() > 0 else { return }
-                let firstCoordinate = path.coordinate(at: 0)
-                
-                let etaText = ETAController.shared.etaValue.isEmpty ? "1" : ETAController.shared.etaValue
-                let startMarkerView = StartPinMarkerView(time: etaText)
-                let host = UIHostingController(rootView: startMarkerView)
-                host.view.backgroundColor = .clear
-                host.view.frame = CGRect(x: 0, y: 0, width: 80, height: 100)
-                
-                let startMarker = GMSMarker(position: firstCoordinate)
-                startMarker.iconView = host.view
-                startMarker.groundAnchor = CGPoint(x: 0.5, y: 0.82)
-                startMarker.map = mapView
-                
-                    // 👇 Observe live ETA changes
-                etaSubscriber = ETAController.shared.$etaValue
-                    .receive(on: RunLoop.main)
-                    .sink { newEta in
-                        guard !newEta.isEmpty else { return }
-                        print("🕒 Updated ETA: \(newEta)")
-                        let updatedView = StartPinMarkerView(time: newEta)
-                        let updatedHost = UIHostingController(rootView: updatedView)
-                        updatedHost.view.backgroundColor = .clear
-                        updatedHost.view.frame = host.view.frame
-                        startMarker.iconView = updatedHost.view
-                    }
-            }
+
+            // MARK: - Starting Point Marker
+        DispatchQueue.main.async {
+            let etaText = self.pickupEtaMinutes(
+                fromSecondsText: ETAController.shared.etaValue
+            )
+            let startMarkerView = StartPinMarkerView(time: etaText)
+            let host = UIHostingController(rootView: startMarkerView)
+            host.view.backgroundColor = .clear
+            host.view.frame = CGRect(x: 0, y: 0, width: 80, height: 100)
+
+            let startMarker = GMSMarker(position: origin)
+            startMarker.iconView = host.view
+            startMarker.groundAnchor = CGPoint(x: 0.5, y: 0.82)
+            startMarker.isTappable = false
+            startMarker.map = mapView
+
+            etaSubscriber = ETAController.shared.$etaValue
+                .receive(on: RunLoop.main)
+                .sink { newEta in
+                    guard !newEta.isEmpty else { return }
+                    let minutes = self.pickupEtaMinutes(fromSecondsText: newEta)
+                    let updatedView = StartPinMarkerView(time: minutes)
+                    let updatedHost = UIHostingController(rootView: updatedView)
+                    updatedHost.view.backgroundColor = .clear
+                    updatedHost.view.frame = host.view.frame
+                    startMarker.iconView = updatedHost.view
+                }
         }
-        
+
             // MARK: - Destination Marker
         reverseGeocode(coordinate: destination) { placeName in
             DispatchQueue.main.async {
@@ -412,18 +467,26 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
                 
                 let markerTime = self.durationText ?? ""
                 let markerAddress = placeName
-                let markerView = MarkerView(
-                    time: markerTime,
-                    address: self.dropOffLocationAddress ?? markerAddress
-                )
-                let host = UIHostingController(rootView: markerView)
-                host.view.backgroundColor = .clear
-                host.view.frame = CGRect(x: 0, y: 0, width: 240, height: 40)
+            let markerView = RouteAddressTagMarkerView(
+                tagLabel: markerTime,
+                address: self.dropOffLocationAddress ?? markerAddress
+            )
+            let host = UIHostingController(rootView: markerView)
+            host.view.backgroundColor = .clear
+            host.view.isUserInteractionEnabled = true
+            host.view.frame = CGRect(
+                x: 0,
+                y: 0,
+                width: UIScreen.screenWidth - 20,
+                height: 48
+            )
                 
                     // ✅ Place the marker on the actual last coordinate of the polyline
                 let marker = GMSMarker(position: lastCoordinate)
                 marker.iconView = host.view
                 marker.groundAnchor = CGPoint(x: 0.0999, y: 0.53)
+                marker.tracksViewChanges = true
+                marker.isTappable = false
                 marker.map = mapView
                 
                 print("📍 Destination marker set at polyline end: \(lastCoordinate.latitude), \(lastCoordinate.longitude)")
@@ -448,64 +511,15 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
 }
 
 #Preview {
-    MarkerView(time: "12 mins", address: "123 address")
+    RouteAddressTagMarkerView(tagLabel: "12 mins", address: "123 address")
 }
 
 struct MarkerView: View {
     var time: String
     var address: String
-    @State var width: CGFloat = UIScreen.screenWidth / 2
-    
+
     var body: some View {
-        HStack {
-            Rectangle()
-                .frame(width: 100, height: 30)
-                .clipShape(RoundedCorner(radius: 50, corners: [.topLeft, .bottomLeft]))
-                .foregroundColor(HovrMapColors.routeGreenMutedSwiftUI)
-                .overlay {
-                    HStack {
-                        Circle()
-                            .fill(HovrMapColors.routeGreenLightSwiftUI)
-                            .frame(width: 20, height: 20)
-                            .overlay {
-                                Circle()
-                                    .fill(Color(red: 74, green: 171, blue: 36))
-                                    .frame(width: 12, height: 12)
-                            }
-                        
-                        Text(time)
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundColor(.white)
-                    }
-                }
-            
-            Spacer()
-            Text(address)
-                .font(.system(size: 12))
-                .foregroundColor(.black)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            
-            Spacer()
-            Image(systemName: "chevron.right")
-                .foregroundColor(.black)
-                .padding(.horizontal, 10)
-        }
-        .frame(width: width, height: 30)
-        .background(Color.white)
-        .cornerRadius(50)
-            // **FIX: Make the entire area tappable**
-        .contentShape(Rectangle())
-        .onTapGesture {
-            print(">>>>>>>>>>>> ONTAP ")
-            withAnimation(.easeInOut(duration: 0.3)) {
-                if width == UIScreen.screenWidth / 2 {
-                    self.width = UIScreen.screenWidth - 20
-                } else {
-                    self.width = UIScreen.screenWidth / 2
-                }
-            }
-        }
+        RouteAddressTagMarkerView(tagLabel: time, address: address)
     }
 }
 

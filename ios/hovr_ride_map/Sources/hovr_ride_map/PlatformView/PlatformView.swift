@@ -87,6 +87,9 @@ class RouteOnGoogleMapsView: NSObject, FlutterPlatformView {
             }
             return dropOffAddress
         }()
+
+        let stops = RouteStopLocation.parse(from: args)
+        print("RouteOnGoogleMapsView: Parsed \(stops.count) stops")
         
         if encodedPolyline.isEmpty {
             print("⚠️ No polyline found in response")
@@ -119,7 +122,8 @@ class RouteOnGoogleMapsView: NSObject, FlutterPlatformView {
             distance: distanceMeters,
             routeData : updatedSnapshot,
             pickUpAddress: pickupAddress,
-            dropOffAddress: dropOffAddress
+            dropOffAddress: dropOffAddress,
+            stops: stops
         )
         
         print("🔍 RouteOnGoogleMapsView PARAMS:")

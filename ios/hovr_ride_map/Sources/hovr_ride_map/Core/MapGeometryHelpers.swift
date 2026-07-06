@@ -151,3 +151,76 @@ func coordinateFromChannelValue(_ value: Any?) -> CLLocationDegrees? {
     if let number = value as? NSNumber { return number.doubleValue }
     return nil
 }
+
+/// Great-circle distance between two coordinates in meters.
+func distanceMeters(
+    from origin: CLLocationCoordinate2D,
+    to destination: CLLocationCoordinate2D
+) -> CLLocationDistance {
+    CLLocation(latitude: origin.latitude, longitude: origin.longitude)
+        .distance(from: CLLocation(latitude: destination.latitude, longitude: destination.longitude))
+}
+
+/// Index of the path vertex closest to `coordinate`.
+func closestIndex(on path: GMSPath, to coordinate: CLLocationCoordinate2D) -> UInt {
+    guard path.count() > 0 else { return 0 }
+
+    var bestIndex: UInt = 0
+    var bestDistance = CLLocationDistance.greatestFiniteMagnitude
+    for index in 0..<path.count() {
+        let point = path.coordinate(at: index)
+        let distance = distanceMeters(from: coordinate, to: point)
+        if distance < bestDistance {
+            bestDistance = distance
+            bestIndex = index
+        }
+    }
+    return bestIndex
+}
+
+/// Builds a route path that starts at the driver and omits vertices behind them.
+func trimmedPath(
+    from path: GMSPath,
+    startAt driver: CLLocationCoordinate2D,
+    duplicateThresholdMeters: CLLocationDistance = 10
+) -> GMSMutablePath? {
+    guard path.count() > 1 else { return nil }
+    guard CLLocationCoordinate2DIsValid(driver) else { return nil }
+
+    let startIndex = closestIndex(on: path, to: driver)
+    let mutable = GMSMutablePath()
+    mutable.add(driver)
+
+    for index in startIndex..<path.count() {
+        let coordinate = path.coordinate(at: index)
+        if mutable.count() == 1,
+           distanceMeters(from: driver, to: coordinate) < duplicateThresholdMeters {
+            continue
+        }
+        mutable.add(coordinate)
+    }
+
+    guard mutable.count() > 1 else { return nil }
+    return mutable
+}
+
+/// Returns a stable display path: uses the stream leg as-is when the driver is already
+/// near the polyline start; otherwise trims once so the line begins at the driver.
+func routePathForDisplay(
+    from path: GMSPath,
+    driver: CLLocationCoordinate2D,
+    nearStartThresholdMeters: CLLocationDistance = 25
+) -> GMSMutablePath? {
+    guard path.count() > 1 else { return nil }
+    guard CLLocationCoordinate2DIsValid(driver) else { return nil }
+
+    let pathStart = path.coordinate(at: 0)
+    if distanceMeters(from: driver, to: pathStart) < nearStartThresholdMeters {
+        let mutable = GMSMutablePath()
+        for index in 0..<path.count() {
+            mutable.add(path.coordinate(at: index))
+        }
+        return mutable
+    }
+    return trimmedPath(from: path, startAt: driver)
+}

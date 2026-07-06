@@ -93,4 +93,9 @@ internal object RideMapPolylineDecoder {
 
         return emptyList()
     }
+
+    /** Skip redraw when the encoded polyline is unchanged (matches iOS dedup). */
+    fun shouldSkipPolylineRedraw(newPolyline: String, lastDrawn: String?): Boolean {
+        return lastDrawn != null && newPolyline == lastDrawn
+    }
 }

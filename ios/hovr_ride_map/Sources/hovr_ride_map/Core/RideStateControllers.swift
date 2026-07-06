@@ -44,6 +44,8 @@ class PolylineController: ObservableObject {
 
     func clearPolyline() {
         UserDefaults.standard.removeObject(forKey: userDefaultsKey)
+        let encoded = polyline["polyline"] as? String ?? ""
+        guard !encoded.isEmpty else { return }
         polyline = [:]
         print("🗑️ Polyline cleared from UserDefaults")
     }
@@ -152,5 +154,54 @@ class TripUserController: ObservableObject {
 
     func clear() {
         coordinate = nil
+    }
+}
+
+struct TripStopCoordinate: Equatable {
+    let lat: Double
+    let lng: Double
+    let address: String
+    let index: Int
+}
+
+class TripStopsController: ObservableObject {
+    static let shared = TripStopsController()
+
+    @Published private(set) var stops: [TripStopCoordinate] = []
+
+    private init() {}
+
+    func update(rawStops: [[String: Any]]) {
+        var parsed: [TripStopCoordinate] = []
+        for item in rawStops {
+            guard let lat = doubleValue(item["latitude"]),
+                  let lng = doubleValue(item["longitude"])
+            else {
+                continue
+            }
+            if lat == 0, lng == 0 { continue }
+            let address = item["address"] as? String ?? ""
+            parsed.append(
+                TripStopCoordinate(
+                    lat: lat,
+                    lng: lng,
+                    address: address,
+                    index: parsed.count + 1
+                )
+            )
+        }
+        stops = parsed
+    }
+
+    func clear() {
+        stops = []
+    }
+
+    private func doubleValue(_ value: Any?) -> Double? {
+        if let number = value as? NSNumber { return number.doubleValue }
+        if let double = value as? Double { return double }
+        if let int = value as? Int { return Double(int) }
+        if let string = value as? String { return Double(string) }
+        return nil
     }
 }

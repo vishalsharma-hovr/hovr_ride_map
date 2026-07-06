@@ -1,3 +1,14 @@
+## 1.0.3
+
+- Route preview: show intermediate stops with destination-style address tags; tap expands to two lines with ellipsis.
+- Native map chrome: disable Google Maps recenter, compass, toolbar, and POI/marker place UI on home, ride, and route-preview maps.
+- In-trip ride map: stream-polygon-driven routes, movement-based driver bearing, one-time meet-at-pickup camera fit, and gesture-aware recenter.
+- Android ride map: smooth in-trip driver animation via shared `CarMarkers` (matches iOS ride map).
+- Android ride map: preserve trip driver marker position when route polyline refreshes.
+- Android ride map: skip redundant polyline redraws when encoded route is unchanged.
+- Android: fix duplicate Kotlin source-set compile error in plugin `build.gradle.kts`.
+- iOS: embed `MapChromePolicy` in `MapUIKitExtensions` so CocoaPods picks it up without a fresh `pod install`.
+
 ## 1.0.2
 
 - Android home map: use native `isMyLocationEnabled` blue dot (matches iOS and Google Maps) instead of a custom green marker that flickered on each GPS update.

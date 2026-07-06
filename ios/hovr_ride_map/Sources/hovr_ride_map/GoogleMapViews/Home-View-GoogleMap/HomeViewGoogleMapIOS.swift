@@ -50,14 +50,28 @@ final class HomeViewGoogleMapIOS: NSObject, FlutterPlatformView {
     // Observes the shared recenter flag toggled from Flutter via com.hovr/global_channel
     private var cancellables = Set<AnyCancellable>()
     
-    init(frame: CGRect, messenger: FlutterBinaryMessenger, viewId: Int64) {
-        let camera = GMSCameraPosition.camera(withLatitude: 0, longitude: 0, zoom: 15)
+    init(
+        frame: CGRect,
+        messenger: FlutterBinaryMessenger,
+        viewId: Int64,
+        initialLatitude: Double? = nil,
+        initialLongitude: Double? = nil
+    ) {
+        let hasInitialCoords = initialLatitude != nil && initialLongitude != nil &&
+            (initialLatitude != 0.0 || initialLongitude != 0.0)
+        let cameraLat = hasInitialCoords ? initialLatitude! : 0.0
+        let cameraLng = hasInitialCoords ? initialLongitude! : 0.0
+        let camera = GMSCameraPosition.camera(withLatitude: cameraLat, longitude: cameraLng, zoom: 15)
         self.mapView = GMSMapView.map(withFrame: frame, camera: camera)
         self.locationManager = CLLocationManager()
         self.reCenterChannel = FlutterMethodChannel(name: "ride-view-channel", binaryMessenger: messenger)
         self.driversChannel = FlutterMethodChannel(name: "show-drivers-location-on-map", binaryMessenger: messenger)
         
         super.init()
+        
+        if hasInitialCoords {
+            self.firstFix = false
+        }
         
         // print("🟢 ==================== INIT START ====================")
         // print("🟢 ViewId: \(viewId)")
@@ -146,6 +160,7 @@ final class HomeViewGoogleMapIOS: NSObject, FlutterPlatformView {
         mapView.isTrafficEnabled = false
         mapView.delegate = self
         mapView.isMyLocationEnabled = true
+        MapChromePolicy.apply(to: mapView)
         print("🟢 Map view setup complete")
     }
     
@@ -155,6 +170,9 @@ final class HomeViewGoogleMapIOS: NSObject, FlutterPlatformView {
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.requestWhenInUseAuthorization()
         locationManager.startUpdatingLocation()
+        if firstFix, let location = locationManager.location {
+            updateLocationOnMap(location: location)
+        }
         print("🟢 Location manager setup complete")
     }
     
@@ -449,6 +467,19 @@ extension HomeViewGoogleMapIOS: GMSMapViewDelegate {
     func mapView(_ mapView: GMSMapView, didChange position: GMSCameraPosition) {
         // Keep firstFix as is
         firstFix = false
+    }
+
+    func mapView(_ mapView: GMSMapView, didTap marker: GMSMarker) -> Bool {
+        true
+    }
+
+    func mapView(
+        _ mapView: GMSMapView,
+        didTapPOIWithPlaceID placeID: String,
+        name: String,
+        location: CLLocationCoordinate2D
+    ) -> Bool {
+        true
     }
 }
 

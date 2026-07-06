@@ -104,31 +104,46 @@ class CarMarkers(private val map: GoogleMap, private val icon: BitmapDescriptor)
             if (dt < minDt) continue
 
             val dist = distanceMeters(start, end)
-            val expected = ((fix.speedMps ?: prev?.speedMps ?: 12f).coerceAtLeast(0.1f) * (dt / 1000f))
+            val dtSec = dt / 1000f
+            val rawSpeed = (fix.speedMps ?: prev?.speedMps ?: 12f).coerceAtLeast(0.1f)
+            val observedSpeed = if (dtSec > 0f) (dist / dtSec).toFloat() else rawSpeed
+            val capMps = 10f
+            val mixAlpha = 0.30f
+            val effSpeed = maxOf(
+                (1f - mixAlpha) * minOf(rawSpeed, capMps) + mixAlpha * minOf(observedSpeed, capMps),
+                0.1f,
+            )
+            val expected = effSpeed * dtSec
             val dynTeleport = maxOf(BASE_TELEPORT_DIST_M, expected * TELEPORT_FACTOR)
 
             when {
                 dist > dynTeleport -> {
                     cancelAnims(fix.id)
                     marker.position = end
-                    fix.bearingDeg?.let { marker.rotation = normalize360(it) }
+                    val heading = movementHeading(start, end) ?: fix.bearingDeg
+                    heading?.let { marker.rotation = normalize360(it) }
                 }
                 dist < MICRO_MOVE_THRESHOLD_METERS -> {
-                    fix.bearingDeg?.let { newHeading ->
-                        val delta = kotlin.math.abs(normalizeDelta(newHeading - marker.rotation))
-                        if (delta >= HEADING_DEADZONE_DEG) {
-                            animateBearing(fix.id, marker, marker.rotation, newHeading, 200L)
-                        }
-                    }
+                    // Stationary — keep heading stable; ignore noisy server bearing (iOS parity).
                 }
                 else -> {
-                    val duration = calculateAnimationDuration(dist, fix.speedMps, prev?.speedMps, dt)
-                    animateMarker(fix.id, marker, start, end, fix.bearingDeg, duration)
+                    val duration = calculateAnimationDuration(dist, effSpeed, effSpeed, dt)
+                    val heading = movementHeading(start, end)
+                    animateMarker(fix.id, marker, start, end, heading, duration)
                 }
             }
 
             lastFix[fix.id] = fix
             lastUpdateTime[fix.id] = nowMs
         }
+    }
+
+    fun marker(id: String): Marker? = markersById[id]
+
+    fun remove(id: String) {
+        cancelAnims(id)
+        markersById.remove(id)?.remove()
+        lastFix.remove(id)
+        lastUpdateTime.remove(id)
     }
 }

@@ -40,15 +40,6 @@ android {
         jvmTarget = JavaVersion.VERSION_17.toString()
     }
 
-    sourceSets {
-        getByName("main") {
-            java.srcDirs("src/main/kotlin")
-        }
-        getByName("test") {
-            java.srcDirs("src/test/kotlin")
-        }
-    }
-
     defaultConfig {
         minSdk = 24
     }

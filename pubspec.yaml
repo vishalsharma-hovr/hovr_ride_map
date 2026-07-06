@@ -1,6 +1,6 @@
 name: hovr_ride_map
 description: Native Google Maps platform views and ride map channels for HOVR rider apps.
-version: 1.0.2
+version: 1.0.3
 homepage: https://github.com/vishalsharma-hovr/hovr_ride_map
 repository: https://github.com/vishalsharma-hovr/hovr_ride_map
 publish_to: none

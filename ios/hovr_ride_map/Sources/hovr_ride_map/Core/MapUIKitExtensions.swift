@@ -1,3 +1,4 @@
+import GoogleMaps
 import SwiftUI
 import UIKit
 
@@ -30,4 +31,12 @@ enum HovrMapColors {
     static let routeGreenSwiftUI = Color(red: 74 / 255, green: 171 / 255, blue: 36 / 255)
     static let routeGreenLightSwiftUI = Color(red: 0.18, green: 0.49, blue: 0.22)
     static let routeGreenMutedSwiftUI = Color(red: 0.29, green: 0.67, blue: 0.22)
+}
+
+/// Disables native Google Maps chrome so only app polylines and the location dot are interactive.
+enum MapChromePolicy {
+    static func apply(to mapView: GMSMapView) {
+        mapView.settings.myLocationButton = false
+        mapView.settings.compassButton = false
+    }
 }

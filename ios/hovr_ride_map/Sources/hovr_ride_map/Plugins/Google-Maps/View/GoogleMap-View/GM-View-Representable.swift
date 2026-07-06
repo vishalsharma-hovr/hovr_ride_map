@@ -91,8 +91,7 @@ struct GoogleMapsViewRepresentable: UIViewRepresentable {
         mapView.settings.scrollGestures = true
         mapView.settings.tiltGestures = false
         mapView.settings.rotateGestures = true
-        mapView.settings.compassButton = true
-    // mapView.isMyLocationEnabled = false
+        MapChromePolicy.apply(to: mapView)
     }
     
 }

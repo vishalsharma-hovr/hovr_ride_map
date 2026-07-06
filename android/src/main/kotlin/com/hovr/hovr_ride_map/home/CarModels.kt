@@ -51,6 +51,13 @@ fun shortestHeadingTarget(from: Float, to: Float): Float {
     return normalize360(from + df)
 }
 
+/** Movement-based heading — parity with iOS [movementHeading]. */
+fun movementHeading(start: LatLng, end: LatLng): Float? {
+    val dist = distanceMeters(start, end)
+    if (dist < MICRO_MOVE_THRESHOLD_METERS) return null
+    return com.hovr.hovr_ride_map.shared.calculateBearing(start, end)
+}
+
 // Great-circle interpolation
 fun slerpLatLng(a: LatLng, b: LatLng, t: Float): LatLng {
     val lat1 = Math.toRadians(a.latitude)

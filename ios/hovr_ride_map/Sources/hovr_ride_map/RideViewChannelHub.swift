@@ -19,6 +19,8 @@ final class RideViewChannelHub {
         "pickup-location",
         "user-location",
         "drop-off-location",
+        "trip-stops",
+        "clear-pickup-user-markers",
     ]
 
     static func install(messenger: FlutterBinaryMessenger) {

@@ -54,8 +54,11 @@ struct RideMapViewRepresentable: UIViewRepresentable {
         var activePolyline: GMSPolyline?
         var traveledPolyline: GMSPolyline?
         var lastProcessedPolyline: String = ""
+        var hasFittedCameraToRoute = false
+        var userHasInteractedWithMap = false
 
         var dropOffMarker: GMSMarker?
+        var stopMarkers: [GMSMarker] = []
 
         private let tripDriverId = "trip-driver"
         private var carMarkers: CarMarkers?
@@ -133,6 +136,7 @@ struct RideMapViewRepresentable: UIViewRepresentable {
                 NSLog("⚠️ [hovr_ride_map] performRecenterRequest: mapView is nil")
                 return
             }
+            userHasInteractedWithMap = false
             parent.performRecenter(
                 on: mapView,
                 coordinator: self,
@@ -151,6 +155,7 @@ struct RideMapViewRepresentable: UIViewRepresentable {
                           let self,
                           let mapView = self.mapView else { return }
 
+                    self.userHasInteractedWithMap = false
                     self.parent.performRecenter(
                         on: mapView,
                         coordinator: self,
@@ -165,21 +170,32 @@ struct RideMapViewRepresentable: UIViewRepresentable {
                 .removeDuplicates { oldValue, newValue in
                     let oldPolyline = oldValue["polyline"] as? String ?? ""
                     let newPolyline = newValue["polyline"] as? String ?? ""
-                    return oldPolyline == newPolyline
+                    let oldForce = oldValue["force"] as? Bool ?? false
+                    let newForce = newValue["force"] as? Bool ?? false
+                    return oldPolyline == newPolyline && oldForce == newForce
                 }
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] dict in
-                    guard
-                        let self = self,
-                        let encoded = dict["polyline"] as? String,
-                        !encoded.isEmpty,
-                        let mapView = self.mapView,
-                        encoded != self.lastProcessedPolyline
-                    else {
+                    guard let self, let mapView = self.mapView else { return }
+
+                    let encoded = dict["polyline"] as? String ?? ""
+                    let force = dict["force"] as? Bool ?? false
+
+                    if encoded.isEmpty {
+                        self.clearRouteOverlays(on: mapView)
                         return
                     }
-                    self.lastProcessedPolyline = encoded
-                    self.drawRoute(encoded: encoded, on: mapView)
+
+                    if force {
+                        self.lastProcessedPolyline = ""
+                    }
+
+                    self.applyDriverRoute(
+                        encoded: encoded,
+                        on: mapView,
+                        fitCamera: false,
+                        force: force
+                    )
                 }
                 .store(in: &cancellables)
 
@@ -197,6 +213,28 @@ struct RideMapViewRepresentable: UIViewRepresentable {
                     self.upsertTripDriver(coordinate: coordinate, location: location)
                 }
                 .store(in: &cancellables)
+
+            TripStageController.shared.$tripStage
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] stage in
+                    guard let self else { return }
+                    let replayStages = ["headingToDestination", "meetAtPickup", "driverWaitingAtPickup"]
+                    if replayStages.contains(stage) {
+                        self.lastProcessedPolyline = ""
+                    }
+                    if stage == "meetAtPickup" || stage == "driverWaitingAtPickup" {
+                        self.hasFittedCameraToRoute = false
+                    }
+                }
+                .store(in: &cancellables)
+
+            TripStopsController.shared.$stops
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    guard let self, let mapView = self.mapView else { return }
+                    self.redrawStopMarkers(on: mapView)
+                }
+                .store(in: &cancellables)
         }
         
         deinit {
@@ -207,6 +245,8 @@ struct RideMapViewRepresentable: UIViewRepresentable {
             traveledPolyline?.map = nil
             carMarker?.map = nil
             dropOffMarker?.map = nil
+            stopMarkers.forEach { $0.map = nil }
+            stopMarkers.removeAll()
             print("✅ Coordinator deallocated")
         }
         
@@ -221,8 +261,30 @@ struct RideMapViewRepresentable: UIViewRepresentable {
             } else {
                 marker.icon = GMSMarker.markerImage(with: .blue)
             }
+            marker.isTappable = false
             marker.map = mapView
             self.dropOffMarker = marker
+        }
+
+        func redrawStopMarkers(on mapView: GMSMapView) {
+            stopMarkers.forEach { $0.map = nil }
+            stopMarkers.removeAll()
+
+            for stop in TripStopsController.shared.stops {
+                let host = UIHostingController(rootView: StopPinMarkerView(stopNumber: stop.index))
+                host.view.backgroundColor = .clear
+                host.view.frame = CGRect(x: 0, y: 0, width: 28, height: 28)
+
+                let marker = GMSMarker(
+                    position: CLLocationCoordinate2D(latitude: stop.lat, longitude: stop.lng)
+                )
+                marker.iconView = host.view
+                marker.groundAnchor = CGPoint(x: 0.5, y: 0.5)
+                marker.title = stop.address.isEmpty ? "Stop \(stop.index)" : stop.address
+                marker.isTappable = false
+                marker.map = mapView
+                stopMarkers.append(marker)
+            }
         }
 
             // MARK: - Zoom Scale Calculation
@@ -277,70 +339,114 @@ struct RideMapViewRepresentable: UIViewRepresentable {
             print("🎯 Centered on first polyline coordinate: \(firstCoord.latitude), \(firstCoord.longitude)")
         }
 
-            // MARK: - Draw Route
-        
-        func drawRoute(encoded: String, on mapView: GMSMapView) {
-            guard !encoded.isEmpty else { return }
+            // MARK: - Route overlays
 
+        func clearRouteOverlays(on mapView: GMSMapView) {
+            guard activePolyline != nil || !lastProcessedPolyline.isEmpty else { return }
+
+            activePolyline?.map = nil
+            activePolyline = nil
+            traveledPolyline?.map = nil
+            traveledPolyline = nil
+            lastProcessedPolyline = ""
+        }
+
+        func resolvedDriverCoordinate(fallback: CLLocationCoordinate2D) -> CLLocationCoordinate2D {
+            if let lastDriverCoordinate {
+                return lastDriverCoordinate
+            }
+            let location = parent.driverLocation.driverLocation
+            if let lat = coordinateFromChannelValue(location["lat"]),
+               let lng = coordinateFromChannelValue(location["lng"]) {
+                return CLLocationCoordinate2D(latitude: lat, longitude: lng)
+            }
+            return fallback
+        }
+
+        func updateActivePolyline(path: GMSMutablePath, on mapView: GMSMapView) {
+            if let existing = activePolyline {
+                existing.path = path
+                return
+            }
+
+            let line = GMSPolyline(path: path)
+            line.strokeWidth = 5.0
+            line.strokeColor = UIColor(red: 74 / 255, green: 171 / 255, blue: 36 / 255, alpha: 1)
+            line.geodesic = true
+            line.map = mapView
+            activePolyline = line
+        }
+
+        func placeRouteMarkersIfNeeded(path: GMSPath, on mapView: GMSMapView) {
+            if let dropoff = TripDropoffController.shared.coordinate {
+                addDropOffMarker(
+                    at: CLLocationCoordinate2D(latitude: dropoff.lat, longitude: dropoff.lng),
+                    on: mapView
+                )
+            } else if path.count() > 0 {
+                addDropOffMarker(at: path.coordinate(at: path.count() - 1), on: mapView)
+            }
+            redrawStopMarkers(on: mapView)
+        }
+
+        func applyDriverRoute(
+            encoded: String,
+            on mapView: GMSMapView,
+            fitCamera: Bool,
+            force: Bool = false
+        ) {
+            guard !encoded.isEmpty else { return }
+            if !force, encoded == lastProcessedPolyline, activePolyline != nil {
+                return
+            }
             guard let path = gmsPath(fromEncodedPolyline: encoded), path.count() > 1 else {
                 print("❌ Failed to decode polyline or path has too few points.")
                 return
             }
 
-            let firstCoord = path.coordinate(at: 0)
-            
-            guard CLLocationCoordinate2DIsValid(firstCoord) else {
-                print("❌ Invalid start coordinate.")
+            let driverStart = resolvedDriverCoordinate(fallback: path.coordinate(at: 0))
+            guard let displayPath = routePathForDisplay(from: path, driver: driverStart) else {
+                print("❌ Display path has too few points.")
                 return
             }
-            
-                // Clear previous polylines
-            activePolyline?.map = nil
-            traveledPolyline?.map = nil
-            
-                // Draw the upcoming route
-            let upcomingRoutePolyline = GMSPolyline(path: path)
-            upcomingRoutePolyline.strokeWidth = 5.0
-            upcomingRoutePolyline.strokeColor = UIColor(red: 74/255, green: 171/255, blue: 36/255, alpha: 1)
-            upcomingRoutePolyline.geodesic = true
-            upcomingRoutePolyline.map = mapView
-            activePolyline = upcomingRoutePolyline
 
-            let hadCarMarker = carMarker != nil
-            if !hadCarMarker {
-                var seedBearing: Float?
-                if path.count() >= 2 {
-                    seedBearing = Float(
-                        calculateBearing(from: path.coordinate(at: 0), to: path.coordinate(at: 1))
-                    )
-                }
-                if let lat = parent.driverLocation.driverLocation["lat"] as? CLLocationDegrees,
-                   let lng = parent.driverLocation.driverLocation["lng"] as? CLLocationDegrees {
-                    upsertTripDriver(
-                        coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lng),
-                        location: parent.driverLocation.driverLocation,
-                        seedBearing: seedBearing
-                    )
-                } else if let seedBearing {
-                    upsertTripDriver(
-                        coordinate: path.coordinate(at: 0),
-                        location: [:],
-                        seedBearing: seedBearing
-                    )
-                }
+            lastProcessedPolyline = encoded
+            updateActivePolyline(path: displayPath, on: mapView)
+            placeRouteMarkersIfNeeded(path: path, on: mapView)
+            maybeAutoFitCameraForMeetPickupOnce(on: mapView, encoded: encoded)
+
+            print("✅ Driver-anchored route applied")
+        }
+
+        /// One-time camera fit when the first stream route appears during meet-at-pickup.
+        func maybeAutoFitCameraForMeetPickupOnce(on mapView: GMSMapView, encoded: String) {
+            let stage = TripStageController.shared.tripStage
+            guard stage == "meetAtPickup" || stage == "driverWaitingAtPickup" else { return }
+            guard !userHasInteractedWithMap, !hasFittedCameraToRoute else { return }
+
+            let handled = RideMapRecenterLogic.perform(
+                on: mapView,
+                fit: "driverToPickup",
+                context: RideMapRecenterLogic.Context(
+                    polylineEncoded: encoded,
+                    driverLocation: parent.driverLocation.driverLocation,
+                    carMarker: carMarker,
+                    dropOffMarker: dropOffMarker,
+                    defaultZoom: parent.zoom
+                )
+            )
+            if handled {
+                hasFittedCameraToRoute = true
+                print("🎯 One-time auto-fit for meet-at-pickup route")
             }
-            
-            if let lastCoordinate = path.count() > 0 ? path.coordinate(at: path.count() - 1) : nil {
-                addDropOffMarker(at: lastCoordinate, on: mapView)
-                print("📍 Drop-off marker placed at: \(lastCoordinate.latitude), \(lastCoordinate.longitude)")
-            }
-            
-            if !hadCarMarker {
-                let bounds = GMSCoordinateBounds(path: path)
-                let update = GMSCameraUpdate.fit(bounds, withPadding: 100)
-                mapView.moveCamera(update)
-            }
-            print("✅ Route drawn successfully")
+        }
+
+        func drawRoute(encoded: String, on mapView: GMSMapView) {
+            applyDriverRoute(
+                encoded: encoded,
+                on: mapView,
+                fitCamera: false
+            )
         }
     }
     
@@ -364,14 +470,18 @@ struct RideMapViewRepresentable: UIViewRepresentable {
         
         let mapView = GMSMapView(frame: .zero, camera: camera)
         configureMapSettings(mapView)
+        mapView.delegate = context.coordinator
         context.coordinator.mapView = mapView
         context.coordinator.bindCarMarkers(on: mapView)
         RideMapRecenterRegistry.shared.bind(coordinator: context.coordinator)
         
         if let encoded = polylineController.polyline["polyline"] as? String,
            !encoded.isEmpty {
-            context.coordinator.lastProcessedPolyline = encoded
-            context.coordinator.drawRoute(encoded: encoded, on: mapView)
+            context.coordinator.applyDriverRoute(
+                encoded: encoded,
+                on: mapView,
+                fitCamera: false
+            )
         }
         
         return mapView
@@ -416,10 +526,33 @@ struct RideMapViewRepresentable: UIViewRepresentable {
     }
 
     private func configureMapSettings(_ mapView: GMSMapView) {
+        mapView.isUserInteractionEnabled = true
         mapView.settings.zoomGestures = true
         mapView.settings.scrollGestures = true
         mapView.settings.tiltGestures = true
         mapView.settings.rotateGestures = true
+        MapChromePolicy.apply(to: mapView)
+    }
+}
+
+extension RideMapViewRepresentable.Coordinator: GMSMapViewDelegate {
+    func mapView(_ mapView: GMSMapView, willMove gesture: Bool) {
+        if gesture {
+            userHasInteractedWithMap = true
+        }
+    }
+
+    func mapView(_ mapView: GMSMapView, didTap marker: GMSMarker) -> Bool {
+        true
+    }
+
+    func mapView(
+        _ mapView: GMSMapView,
+        didTapPOIWithPlaceID placeID: String,
+        name: String,
+        location: CLLocationCoordinate2D
+    ) -> Bool {
+        true
     }
 }
 

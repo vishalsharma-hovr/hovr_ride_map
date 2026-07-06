@@ -15,7 +15,14 @@ final class HomeViewGoogleMapPlatformView: NSObject, FlutterPlatformView {
         arguments args: Any?,
         binaryMessenger messenger: FlutterBinaryMessenger?
     ) {
-        inner = HomeViewGoogleMapIOS(frame: frame, messenger: messenger!, viewId: viewId)
+        let argsMap = args as? [String: Any]
+        inner = HomeViewGoogleMapIOS(
+            frame: frame,
+            messenger: messenger!,
+            viewId: viewId,
+            initialLatitude: argsMap?["initialLatitude"] as? Double,
+            initialLongitude: argsMap?["initialLongitude"] as? Double
+        )
         super.init()
     }
 

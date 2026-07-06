@@ -24,6 +24,8 @@ object RideViewChannelHub {
         "pickup-location",
         "user-location",
         "drop-off-location",
+        "trip-stops",
+        "clear-pickup-user-markers",
     )
 
     fun install(messenger: BinaryMessenger) {

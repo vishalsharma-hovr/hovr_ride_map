@@ -1,7 +1,7 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'hovr_ride_map'
-  s.version          = '1.0.0'
+  s.version          = '1.0.3'
   s.summary          = 'Native Google Maps platform views for Flutter ride apps.'
   s.description      = <<-DESC
 Native Google Maps platform views and ride map method channels for Flutter apps.
@@ -22,4 +22,8 @@ Native Google Maps platform views and ride map method channels for Flutter apps.
 
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES', 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386' }
   s.swift_version = '5.0'
+
+  s.test_spec 'Tests' do |test_spec|
+    test_spec.source_files = 'hovr_ride_map/Tests/**/*'
+  end
 end

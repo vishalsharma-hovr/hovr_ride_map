@@ -21,6 +21,7 @@ import androidx.core.graphics.createBitmap
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import com.hovr.hovr_ride_map.shared.BearingSmoother
+import com.hovr.hovr_ride_map.shared.MapChromePolicy
 import com.hovr.hovr_ride_map.RideViewChannelHub
 import com.google.android.gms.location.*
 import com.google.android.gms.tasks.CancellationTokenSource
@@ -37,7 +38,13 @@ import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.platform.PlatformView
 import kotlinx.coroutines.*
 import com.hovr.hovr_ride_map.R
+import com.hovr.hovr_ride_map.home.CarFix
+import com.hovr.hovr_ride_map.home.CarMarkers
+import com.hovr.hovr_ride_map.model.StopLocation
+import com.hovr.hovr_ride_map.route.RouteStopMarkerBitmap
+import com.hovr.hovr_ride_map.route.RouteStopParser
 import com.hovr.hovr_ride_map.shared.calculateBearing
+import com.hovr.hovr_ride_map.shared.HovrCarIcon
 
 internal class RideMapPlatformView(
     context: Context,
@@ -56,11 +63,11 @@ internal class RideMapPlatformView(
 
     private var userMarker: Marker? = null
     private var hasMovedCamera = false
+    private var hasFittedCameraToRoute = false
+    private var userHasInteractedWithMap = false
     private var currentIconSizeDp = -1
     private var destIconCached: BitmapDescriptor? = null
-    private var carIconCached: BitmapDescriptor? = null
 
-    private val carIconCache = mutableMapOf<Int, BitmapDescriptor>()
     private val userIconCache = mutableMapOf<Int, BitmapDescriptor>()
 
     private val activePolylines = mutableListOf<Polyline>()
@@ -74,6 +81,8 @@ internal class RideMapPlatformView(
 
     private val TAG = "drawRoute"
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val tripDriverId = "trip-driver"
+    private var tripCarMarkers: CarMarkers? = null
 
     private var pendingRoute: Pair<String, String?>? = null
     private var pendingPolylineString: String? = null
@@ -96,6 +105,8 @@ internal class RideMapPlatformView(
     private var lastDropoffLatLng: LatLng? = null
     private var lastPickupLatLng: LatLng? = null
     private var lastUserLatLng: LatLng? = null
+    private var stopsList: List<StopLocation> = emptyList()
+    private val stopMarkers = mutableListOf<Marker>()
 
     private val sharedPrefs by lazy {
         context.getSharedPreferences("MeetAtPickupSpotView", Context.MODE_PRIVATE)
@@ -127,8 +138,9 @@ internal class RideMapPlatformView(
                     return@MethodCallHandler
                 }
 
+                val force = arg["force"] as? Boolean ?: false
                 onMain {
-                    setRoute(args, "")
+                    setRoute(args, "", force)
                 }
                 result.success(null)
             }
@@ -140,10 +152,8 @@ internal class RideMapPlatformView(
 
                 if (driverLat != null && driverLng != null) {
                     onMain {
-                        val position = LatLng(driverLat, driverLng)
-                        lastDriverLatLng = position
-                        val marker = carMarker ?: startMarker
-                        marker?.position = position
+                        val bearing = (arg["bearing"] as? Number)?.toFloat()
+                        upsertTripDriver(driverLat, driverLng, bearing)
                     }
                     result.success("Location received successfully!")
                 } else {
@@ -161,6 +171,15 @@ internal class RideMapPlatformView(
                 } else {
                     result.error("INVALID_ARGS", "Missing dropoff lat/lng", null)
                 }
+            }
+
+            "trip-stops" -> {
+                val arg = call.arguments as? Map<*, *>
+                stopsList = RouteStopParser.parse(arg?.get("stops"))
+                onMain {
+                    redrawStopMarkers()
+                }
+                result.success(null)
             }
 
             "pickup-location" -> {
@@ -195,10 +214,12 @@ internal class RideMapPlatformView(
                 pendingRoute = null
                 shouldRestoreRoute = false
                 hasRestoredRoute = false
+                hasFittedCameraToRoute = false
+                userHasInteractedWithMap = false
                 polylinePoints = emptyList()
                 currentPolylineIndex = 0
 
-                clearMapElements()
+                clearRouteOverlays()
                 result.success(null)
             }
 
@@ -218,15 +239,26 @@ internal class RideMapPlatformView(
                 result.success(null)
             }
 
+            "clear-pickup-user-markers" -> {
+                onMain { clearPickupAndUserMarkers() }
+                result.success(null)
+            }
+
             else -> result.notImplemented()
         }
     }
 
-    fun setRoute(polyline: String, eta: String?) {
+    fun setRoute(polyline: String, eta: String?, force: Boolean = false) {
+        if (force) {
+            lastDrawnPolyline = null
+        }
+        if (!force && RideMapPolylineDecoder.shouldSkipPolylineRedraw(polyline, lastDrawnPolyline)) {
+            Log.d(TAG, "Skipping duplicate polyline draw")
+            return
+        }
+
         CoroutineScope(Dispatchers.Main).launch {
             savedPolylineString = polyline
-            lastDrawnPolyline = polyline
-            saveRouteToPrefs(polyline)
             pendingRoute = null
             pendingPolylineString = null
 
@@ -244,7 +276,7 @@ internal class RideMapPlatformView(
 
                 else -> {
                     Log.d(TAG, "Drawing route directly — map & layout ready")
-                    drawRoute(polyline)
+                    drawRoute(polyline, force)
                 }
             }
         }
@@ -367,7 +399,6 @@ internal class RideMapPlatformView(
                     Log.d(TAG, "📍 Drawing route after layout (len=${routeToDraw.length})")
                     pendingPolylineString = null
                     savedPolylineString = routeToDraw
-                    lastDrawnPolyline = routeToDraw
 
                     CoroutineScope(Dispatchers.Main).launch {
                         drawRoute(routeToDraw)
@@ -401,15 +432,14 @@ internal class RideMapPlatformView(
 
                 if (route != null && route.isNotEmpty()) {
                     val hasRoute = activePolylines.isNotEmpty() &&
-                            startMarker != null &&
-                            destMarker != null
+                            route == lastDrawnPolyline
 
                     if (!hasRoute) {
                         Log.d(TAG, "✅ Restoring route (len=${route.length})")
                         hasRestoredRoute = true
                         shouldRestoreRoute = false
 
-                        clearMapElements()
+                        clearRouteOverlays()
                         drawRoute(route)
                     } else {
                         Log.d(TAG, "Route already drawn")
@@ -421,6 +451,28 @@ internal class RideMapPlatformView(
                 Log.d(TAG, "Map not ready (map=${googleMap != null}, ready=$mapViewReady)")
             }
         }, 600)
+    }
+
+    private fun clearRouteOverlays() {
+        onMain {
+            if (activePolylines.isEmpty() && lastDrawnPolyline == null) {
+                Log.d(TAG, "Skipping redundant route clear")
+                return@onMain
+            }
+
+            try {
+                activePolylines.forEach {
+                    try {
+                        it.remove()
+                    } catch (_: Exception) {
+                    }
+                }
+                activePolylines.clear()
+                Log.d(TAG, "✅ Route overlays cleared")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error clearing route overlays: ${e.message}")
+            }
+        }
     }
 
     private fun clearMapElements() {
@@ -450,8 +502,12 @@ internal class RideMapPlatformView(
                 destMarker?.remove()
                 destMarker = null
 
+                clearStopMarkers()
+
                 carMarker?.remove()
                 carMarker = null
+
+                clearTripDriverMarker()
 
                 userMarker?.remove()
                 userMarker = null
@@ -471,11 +527,8 @@ internal class RideMapPlatformView(
         return BitmapDescriptorFactory.fromBitmap(scaled)
     }
 
-    private fun getCarIcon(ctx: Context, sizeDp: Int = 42): BitmapDescriptor {
-        return carIconCached ?: markerIconFromDrawable(ctx, R.drawable.car, sizeDp).also {
-            carIconCached = it
-        }
-    }
+    private fun getCarIcon(ctx: Context): BitmapDescriptor =
+        HovrCarIcon.bitmapDescriptor(ctx)
 
     private fun getDestinationIcon(ctx: Context, sizeDp: Int = 56): BitmapDescriptor {
         return destIconCached ?: getBitmapDescriptorFromVector(
@@ -488,7 +541,7 @@ internal class RideMapPlatformView(
         }
     }
 
-    fun drawRoute(polyline: String) {
+    fun drawRoute(polyline: String, force: Boolean = false) {
         Log.d(TAG, "📍 drawRoute() CALLED - len=${polyline.length}")
 
         val map = googleMap
@@ -510,14 +563,29 @@ internal class RideMapPlatformView(
             emptyList()
         }
 
-        if (decodedPath.isEmpty()) {
-            Log.w(TAG, "Decoded path empty")
+        if (decodedPath.size < 2) {
+            Log.w(TAG, "Decoded path has too few points")
             return
         }
 
-        Log.d(TAG, "Decoded ${decodedPath.size} points")
-
         onMain launch@{
+            if (!force &&
+                RideMapPolylineDecoder.shouldSkipPolylineRedraw(polyline, lastDrawnPolyline) &&
+                activePolylines.isNotEmpty()
+            ) {
+                Log.d(TAG, "Skipping unchanged driver route")
+                return@launch
+            }
+
+            val driverStart = resolvedDriverLatLng(decodedPath.first())
+            val displayPath = RideMapRoutePath.routePathForDisplay(decodedPath, driverStart)
+            if (displayPath == null) {
+                Log.w(TAG, "Display path has too few points")
+                return@launch
+            }
+
+            Log.d(TAG, "Applying driver route (${displayPath.size} pts)")
+
             lastDrawnPolyline = polyline
             savedPolylineString = polyline
             saveRouteToPrefs(polyline)
@@ -526,81 +594,166 @@ internal class RideMapPlatformView(
             userMarker?.remove()
             userMarker = null
 
-            polylinePoints = decodedPath
+            polylinePoints = displayPath
             currentPolylineIndex = 0
 
             bearingSmoother.reset()
-            segmentBearings = if (decodedPath.size >= 2) {
-                FloatArray(decodedPath.size) { i ->
-                    if (i < decodedPath.size - 1)
-                        calculateBearing(decodedPath[i], decodedPath[i + 1])
-                    else
-                        calculateBearing(decodedPath[i - 1], decodedPath[i])
+            segmentBearings = if (displayPath.size >= 2) {
+                FloatArray(displayPath.size) { i ->
+                    if (i < displayPath.size - 1) {
+                        calculateBearing(displayPath[i], displayPath[i + 1])
+                    } else {
+                        calculateBearing(displayPath[i - 1], displayPath[i])
+                    }
                 }
             } else {
                 floatArrayOf(0f)
             }
 
-            startMarker?.remove()
-            startMarker = null
+            updateActivePolyline(displayPath, map)
+            placeRouteMarkersIfNeeded(decodedPath, map)
 
-            activePolylines.forEach { it.remove() }
-            activePolylines.clear()
-            activeMarkers.forEach { it.remove() }
-            activeMarkers.clear()
+            maybeAutoFitCameraForMeetPickupOnce()
 
-            val line = map.addPolyline(
-                PolylineOptions()
-                    .addAll(decodedPath)
-                    .width(15f)
-                    .color(Color.parseColor("#4AAB24"))
-                    .geodesic(true)
-                    .visible(true)
-                    .zIndex(100f)
-            )
-            activePolylines += line
-
-            val start = decodedPath.first()
-            val initialBearing = segmentBearings[0]
-            val initRot = bearingSmoother.apply(initialBearing)
-
-            carMarker?.remove()
-
-            startMarker = map.addMarker(
-                MarkerOptions()
-                    .position(start)
-                    .title("Start")
-                    .icon(getCarIcon(mapView.context, sizeDp = 42))
-                    .anchor(0.5f, 0.5f)
-                    .rotation(initRot)
-                    .zIndex(200f)
-                    .flat(true)
-            )
-
-            val end = decodedPath.last()
-            destMarker?.remove()
-            destMarker = map.addMarker(
-                MarkerOptions()
-                    .position(end)
-                    .title("Destination")
-                    .icon(getDestinationIcon(mapView.context, sizeDp = 26))
-                    .visible(true)
-                    .anchor(0.5f, 0.5f)
-                    .zIndex(300f)
-            )
-
-            followStartMarker(initRot)
-            hasMovedCamera = true
-
-            Log.d(TAG, "✅ Route drawn")
+            Log.d(TAG, "✅ Driver-anchored route applied")
         }
     }
 
-    private fun followStartMarker(currentBearing: Float? = null) {
-        val map = googleMap ?: return
-        val m = startMarker ?: carMarker ?: return
+    private fun isMeetAtPickupStage(): Boolean {
+        return currentTripStage == "meetAtPickup" ||
+            currentTripStage == "driverWaitingAtPickup"
+    }
 
-        val bearing = currentBearing ?: m.rotation
+    /** One-time camera fit when the first stream route appears during meet-at-pickup. */
+    private fun maybeAutoFitCameraForMeetPickupOnce() {
+        if (!isMeetAtPickupStage()) return
+        if (userHasInteractedWithMap || hasFittedCameraToRoute) return
+
+        val map = googleMap ?: return
+        if (!mapViewReady) return
+
+        val mapWidth = mapView.width
+        val mapHeight = mapView.height
+        val state = buildRecenterState()
+        val fitted = RideMapRecenter.applyFit(map, "driverToPickup", state, mapWidth, mapHeight) ||
+            RideMapRecenter.fitFullPolyline(map, state, mapWidth, mapHeight)
+        if (fitted) {
+            hasFittedCameraToRoute = true
+            Log.d(TAG, "One-time auto-fit for meet-at-pickup route")
+        }
+    }
+
+    private fun resolvedDriverLatLng(fallback: LatLng): LatLng = lastDriverLatLng ?: fallback
+
+    private fun updateActivePolyline(points: List<LatLng>, map: GoogleMap) {
+        val existing = activePolylines.firstOrNull()
+        if (existing != null) {
+            existing.points = points
+            return
+        }
+
+        activePolylines.forEach { it.remove() }
+        activePolylines.clear()
+
+        val line = map.addPolyline(
+            PolylineOptions()
+                .addAll(points)
+                .width(15f)
+                .color(Color.parseColor("#4AAB24"))
+                .geodesic(true)
+                .visible(true)
+                .zIndex(100f),
+        )
+        activePolylines += line
+    }
+
+    private fun placeRouteMarkersIfNeeded(path: List<LatLng>, map: GoogleMap) {
+        val end = lastDropoffLatLng ?: path.last()
+        destMarker?.remove()
+        destMarker = map.addMarker(
+            MarkerOptions()
+                .position(end)
+                .title("Destination")
+                .icon(getDestinationIcon(mapView.context, sizeDp = 26))
+                .visible(true)
+                .anchor(0.5f, 0.5f)
+                .zIndex(300f),
+        )
+        redrawStopMarkers()
+    }
+
+    private fun clearStopMarkers() {
+        stopMarkers.forEach {
+            try {
+                it.remove()
+            } catch (_: Exception) {
+            }
+        }
+        stopMarkers.clear()
+    }
+
+    private fun redrawStopMarkers() {
+        val map = googleMap ?: return
+        if (!mapViewReady) return
+        clearStopMarkers()
+        if (stopsList.isEmpty()) return
+
+        stopsList.forEachIndexed { index, stop ->
+            val position = LatLng(stop.latitude, stop.longitude)
+            val stopIcon = BitmapDescriptorFactory.fromBitmap(
+                RouteStopMarkerBitmap.create(mapView.context, index + 1),
+            )
+            map.addMarker(
+                MarkerOptions()
+                    .position(position)
+                    .icon(stopIcon)
+                    .anchor(0.5f, 0.5f)
+                    .title(stop.address.ifBlank { "Stop ${index + 1}" })
+                    .zIndex(250f),
+            )?.also { marker ->
+                stopMarkers.add(marker)
+                activeMarkers.add(marker)
+            }
+        }
+    }
+
+    private fun hasTripDriverMarker(): Boolean {
+        return lastDriverLatLng != null || tripCarMarkers?.marker(tripDriverId) != null
+    }
+
+    private fun upsertTripDriver(lat: Double, lng: Double, bearing: Float? = null) {
+        val markers = tripCarMarkers ?: return
+        markers.upsert(
+            listOf(
+                CarFix(
+                    id = tripDriverId,
+                    lat = lat,
+                    lng = lng,
+                    bearingDeg = bearing,
+                    speedMps = 12f,
+                    timestampMs = System.currentTimeMillis(),
+                ),
+            ),
+        )
+        lastDriverLatLng = LatLng(lat, lng)
+    }
+
+    private fun seedTripDriverAt(position: LatLng, bearing: Float) {
+        upsertTripDriver(position.latitude, position.longitude, bearing)
+    }
+
+    private fun clearTripDriverMarker() {
+        tripCarMarkers?.remove(tripDriverId)
+        lastDriverLatLng = null
+    }
+
+    private fun followStartMarker(currentBearing: Float? = null) {
+        if (userHasInteractedWithMap) return
+        val map = googleMap ?: return
+        val tripMarker = tripCarMarkers?.marker(tripDriverId)
+        val m = tripMarker ?: startMarker ?: carMarker ?: return
+
+        val bearing = currentBearing ?: tripMarker?.rotation ?: m.rotation
 
         val target = if (followOffsetMeters > 0.0) {
             val headingDeg = ((bearing.toDouble() + 180.0) % 360.0)
@@ -639,6 +792,16 @@ internal class RideMapPlatformView(
         googleMap = map.apply {
             isBuildingsEnabled = false
             mapType = GoogleMap.MAP_TYPE_NORMAL
+            uiSettings.isZoomGesturesEnabled = true
+            uiSettings.isScrollGesturesEnabled = true
+            uiSettings.isTiltGesturesEnabled = true
+            uiSettings.isRotateGesturesEnabled = true
+
+            setOnCameraMoveStartedListener { reason ->
+                if (reason == GoogleMap.OnCameraMoveStartedListener.REASON_GESTURE) {
+                    userHasInteractedWithMap = true
+                }
+            }
 
             try {
                 setMapStyle(MapStyleOptions.loadRawResourceStyle(mapView.context, R.raw.hovr_maps_style))
@@ -646,7 +809,10 @@ internal class RideMapPlatformView(
             } catch (e: Exception) {
                 Log.e(TAG, "Map style failed: ${e.message}")
             }
+            MapChromePolicy.apply(this)
         }
+
+        tripCarMarkers = CarMarkers(map, getCarIcon(mapView.context))
 
         startLocationUpdates()
 
@@ -680,7 +846,7 @@ internal class RideMapPlatformView(
         }
 
         when (val stage = currentTripStage) {
-            null -> if (routeToDraw.isNullOrEmpty()) moveToUserLocation()
+            null -> if (routeToDraw.isNullOrEmpty() && !userHasInteractedWithMap) moveToUserLocation()
             else -> applyTripStage(stage)
         }
     }
@@ -689,25 +855,34 @@ internal class RideMapPlatformView(
         if (stage == lastAppliedTripStage) return
         lastAppliedTripStage = stage
         onMain {
-            when {
-                RideMapStageApplier.prefersRouteCamera(stage) && polylinePoints.isNotEmpty() -> {
-                    followStartMarker()
+            if (stage == "headingToDestination" ||
+                stage == "meetAtPickup" ||
+                stage == "driverWaitingAtPickup"
+            ) {
+                if (stage == "headingToDestination") {
+                    clearPickupAndUserMarkers()
                 }
-
-                polylinePoints.isNotEmpty() && startMarker != null -> {
-                    followStartMarker()
-                }
-
-                else -> {
-                    moveToUserLocation(zoom = RideMapStageApplier.defaultZoom(stage))
+                lastDrawnPolyline = null
+                if (stage == "meetAtPickup" || stage == "driverWaitingAtPickup") {
+                    hasFittedCameraToRoute = false
                 }
             }
             Log.d(TAG, "Applied trip stage: $stage")
         }
     }
 
+    private fun clearPickupAndUserMarkers() {
+        lastPickupLatLng = null
+        lastUserLatLng = null
+        userMarker?.remove()
+        userMarker = null
+        Log.d(TAG, "Cleared pickup/user markers for heading stage")
+    }
+
     @SuppressLint("MissingPermission")
     private fun moveToUserLocation(zoom: Float = 15f) {
+        if (currentTripStage == "headingToDestination") return
+        if (userHasInteractedWithMap) return
         if (!hasPermission()) return
 
         fusedLocationClient.lastLocation.addOnSuccessListener { location ->
@@ -751,7 +926,7 @@ internal class RideMapPlatformView(
 
     private fun buildRecenterState() = RideMapRecenter.State(
         lastDriverLatLng = lastDriverLatLng,
-        carPosition = carMarker?.position,
+        carPosition = tripCarMarkers?.marker(tripDriverId)?.position ?: carMarker?.position,
         startPosition = startMarker?.position,
         destPosition = destMarker?.position,
         lastDropoffLatLng = lastDropoffLatLng,
@@ -764,6 +939,8 @@ internal class RideMapPlatformView(
     private fun performRecenter(fit: String?): Boolean {
         val map = googleMap ?: return false
         if (!mapViewReady) return false
+
+        userHasInteractedWithMap = false
 
         val mapWidth = mapView.width
         val mapHeight = mapView.height

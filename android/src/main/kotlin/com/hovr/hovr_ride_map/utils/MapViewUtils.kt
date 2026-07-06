@@ -81,11 +81,11 @@ object MapViewUtils {
         val sdf = SimpleDateFormat("hh:mm a", Locale.getDefault())
         return sdf.format(calendar.time)
     }
-}
 
-fun Context.createFixedFontScaleContext(): Context {
-    val config = resources.configuration.also {
-        it.fontScale = 1.0f
+    fun createFixedFontScaleContext(context: Context): Context {
+        val config = context.resources.configuration.also {
+            it.fontScale = 1.0f
+        }
+        return context.createConfigurationContext(config)
     }
-    return createConfigurationContext(config)
 }

@@ -14,8 +14,9 @@ class HomeMapPlatformViewFactory(
     private val messenger: BinaryMessenger,
 ) : PlatformViewFactory(StandardMessageCodec.INSTANCE) {
     override fun create(context: Context, viewId: Int, args: Any?): PlatformView {
+        val argsMap = args as? Map<*, *> ?: emptyMap<String, Any?>()
         return MissingGoogleMapsApiKeyPlatformView.createOrMap(context) {
-            HomeMapPlatformView(context, messenger)
+            HomeMapPlatformView(context, messenger, argsMap)
         }
     }
 }

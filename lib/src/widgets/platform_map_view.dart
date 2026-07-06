@@ -22,9 +22,7 @@ class PlatformMapView extends StatelessWidget {
   final ValueChanged<int>? onPlatformViewCreated;
 
   Set<Factory<OneSequenceGestureRecognizer>> get _gestureRecognizers => {
-    Factory<PanGestureRecognizer>(PanGestureRecognizer.new),
-    Factory<ScaleGestureRecognizer>(ScaleGestureRecognizer.new),
-    Factory<TapGestureRecognizer>(TapGestureRecognizer.new),
+    Factory<EagerGestureRecognizer>(EagerGestureRecognizer.new),
   };
 
   @override

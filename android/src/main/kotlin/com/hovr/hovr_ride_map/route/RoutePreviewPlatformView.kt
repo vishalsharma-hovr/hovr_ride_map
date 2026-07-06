@@ -33,10 +33,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.hovr.hovr_ride_map.R
+import com.hovr.hovr_ride_map.RideViewChannelHub
+import com.hovr.hovr_ride_map.shared.MapChromePolicy
+import com.hovr.hovr_ride_map.utils.MapViewUtils
 import com.hovr.hovr_ride_map.utils.MapViewUtils.createBitmapFromView
 import com.hovr.hovr_ride_map.utils.MapViewUtils.formatDurationHMS
 import com.hovr.hovr_ride_map.utils.MapViewUtils.getPlaceNameFromCoordinates
-import com.hovr.hovr_ride_map.utils.createFixedFontScaleContext
 import kotlin.math.*
 
 internal class RoutePreviewPlatformView(
@@ -44,7 +46,7 @@ internal class RoutePreviewPlatformView(
 ) : PlatformView, OnMapReadyCallback {
 
     // ✅ Fixed context — ignores system font scale
-    private val fixedContext: Context = context.createFixedFontScaleContext()
+    private val fixedContext: Context = MapViewUtils.createFixedFontScaleContext(context)
     private val mapView: MapView = MapView(context)
     private lateinit var mMap: GoogleMap
 
@@ -55,17 +57,8 @@ internal class RoutePreviewPlatformView(
 
     var computeRoutesResponse: ComputeRoutesResponse
     private var stopsList: List<StopLocation> = emptyList()
+    private var dropoffLocationName: String = ""
 
-    /*
-     *  marker
-     */
-    private val markerView = LayoutInflater.from(fixedContext).inflate(R.layout.custom_marker, null)
-
-
-    private val timeTextView = markerView.findViewById<TextView>(R.id.timeTextView)
-    private val addressTextView = markerView.findViewById<TextView>(R.id.addressTextView)
-
-    //    private val startingPointView = LayoutInflater.from(context).inflate(R.layout.custom_starting_point, null)
     private val startingPointView = LayoutInflater.from(fixedContext).inflate(R.layout.eta_marker, null)
     private val etaTextView = startingPointView.findViewById<TextView>(R.id.eta_text)
 
@@ -75,21 +68,45 @@ internal class RoutePreviewPlatformView(
     private var routePadding: Int = 120
     private val activePolylines = mutableListOf<Polyline>()
     private val activeMarkers = mutableListOf<Marker>()
+    private var startMarker: Marker? = null
+    private var pendingDriverEtaSeconds: Int? = null
+    private var rideViewHandlerRegistered = false
+
+    private val rideViewHandler = MethodChannel.MethodCallHandler { call, result ->
+        when (call.method) {
+            "eta-channel" -> {
+                val args = call.arguments as? Map<*, *>
+                val seconds = when (val raw = args?.get("eta")) {
+                    is Int -> raw
+                    is Number -> raw.toInt()
+                    else -> null
+                }
+                if (seconds != null) {
+                    applyDriverEtaSeconds(seconds)
+                }
+                result.success(null)
+            }
+            else -> result.notImplemented()
+        }
+    }
 
     init {
         mapView.onCreate(null)
         mapView.getMapAsync(this)
         registerRecenterHandler()
+        registerRideViewHandler()
 
         MethodChannel(messenger, "ETA_MARKER").setMethodCallHandler { call, result ->
             if (call.method == "eta") {
-                val eta = call.arguments as String
-                println(">>>>>>> ETA >>>>> $eta")
-                etaTextView.text = eta
+                val eta = call.arguments as? String
+                val seconds = eta?.toIntOrNull()
+                if (seconds != null) {
+                    applyDriverEtaSeconds(seconds)
+                }
+                result.success(null)
             } else {
                 result.notImplemented()
             }
-
         }
         val rawOrigin = LatLng(argsMap["pickup-lat"] as Double, argsMap["pickup-long"] as Double)
         val rawDestination = LatLng(argsMap["latitude"] as Double, argsMap["longitude"] as Double)
@@ -101,23 +118,9 @@ internal class RoutePreviewPlatformView(
         println(">>>>>> ROUTES Compute: $computeRoutesResponse")
         println(">>>>>> ROUTES Compute: ${argsMap["computeRoutesResponseJson"]}")
 
-        //MARK: STOPS
-        val stopsData = argsMap["stops"] as? List<Map<String, Any>>
-        Log.d("RoutesOnMapView", "STOPS : : : $stopsData stops")
-        if (stopsData != null) {
-            stopsList = stopsData.mapNotNull { stopMap ->
-                try {
-                    val latitude = stopMap["latitude"] as? Double ?: return@mapNotNull null
-                    val longitude = stopMap["longitude"] as? Double ?: return@mapNotNull null
-                    val address = stopMap["address"] as? String ?: ""
-                    StopLocation(latitude, longitude, address)
-                } catch (e: Exception) {
-                    Log.e("RoutesOnMapView", "Error parsing stop: ${e.message}")
-                    null
-                }
-            }
-            Log.d("RoutesOnMapView", "Parsed ${stopsList.size} stops")
-        }
+        stopsList = RouteStopParser.parse(argsMap["stops"])
+        dropoffLocationName = argsMap["dropoff-location-name"] as? String ?: ""
+        Log.d("RoutesOnMapView", "Parsed ${stopsList.size} stops from ${argsMap["stops"]}")
         val referencePoint = LatLng(43.73835115891842, -79.46301967454586)
 
         val originDistance = calculateDistanceInMeters(rawOrigin, referencePoint)
@@ -137,17 +140,48 @@ internal class RoutePreviewPlatformView(
             rawDestination
         }
 
-        addressTextView.setOnClickListener { Log.d("PlatformView", "TextView clicked") }
-
         Log.d("DATAAAAA", "----->>>>>>>>>>>>>> argsMap $origin")
     }
 
     override fun getView(): View = mapView
 
     override fun dispose() {
+        unregisterRideViewHandler()
         reCenterMethodChannel.setMethodCallHandler(null)
         mapView.onDestroy()
         onDestroy()
+    }
+
+    private fun registerRideViewHandler() {
+        if (!rideViewHandlerRegistered) {
+            RideViewChannelHub.push(rideViewHandler)
+            rideViewHandlerRegistered = true
+        }
+    }
+
+    private fun unregisterRideViewHandler() {
+        if (rideViewHandlerRegistered) {
+            RideViewChannelHub.pop(rideViewHandler)
+            rideViewHandlerRegistered = false
+        }
+    }
+
+    private fun etaMinutesLabel(seconds: Int): String {
+        if (seconds <= 0) return "1"
+        return max((seconds / 60.0).roundToInt(), 1).toString()
+    }
+
+    private fun applyDriverEtaSeconds(seconds: Int) {
+        pendingDriverEtaSeconds = seconds
+        etaTextView.text = etaMinutesLabel(seconds)
+        refreshStartMarkerIcon()
+    }
+
+    private fun refreshStartMarkerIcon() {
+        val marker = startMarker ?: return
+        if (!::mMap.isInitialized) return
+        val bitmap = BitmapDescriptorFactory.fromBitmap(createBitmapFromView(startingPointView))
+        marker.setIcon(bitmap)
     }
 
     private fun registerRecenterHandler() {
@@ -171,6 +205,7 @@ internal class RoutePreviewPlatformView(
         activePolylines.clear()
         activeMarkers.forEach { it.remove() }
         activeMarkers.clear()
+        startMarker = null
         routeBounds = null
     }
 
@@ -194,10 +229,40 @@ internal class RoutePreviewPlatformView(
 
     override fun onMapReady(map: GoogleMap) {
         mMap = map
-        mMap.uiSettings.isCompassEnabled = false
+        MapChromePolicy.apply(mMap)
+        registerTaggedMarkerClickListener()
         drawRoute(
             origin = origin, destination = destination, computeRoutesResponse = computeRoutesResponse
         )
+    }
+
+    private fun registerTaggedMarkerClickListener() {
+        mMap.setOnMarkerClickListener { marker ->
+            val tag = marker.tag as? RouteTaggedMarkerTag ?: return@setOnMarkerClickListener false
+            tag.expanded = !tag.expanded
+            marker.setIcon(
+                BitmapDescriptorFactory.fromBitmap(
+                    RouteTaggedMarkerBitmap.bitmapFor(fixedContext, tag),
+                ),
+            )
+            true
+        }
+    }
+
+    private fun addTaggedMarker(position: LatLng, tag: RouteTaggedMarkerTag): Marker? {
+        return mMap.addMarker(
+            MarkerOptions()
+                .position(position)
+                .icon(
+                    BitmapDescriptorFactory.fromBitmap(
+                        RouteTaggedMarkerBitmap.bitmapFor(fixedContext, tag),
+                    ),
+                )
+                .anchor(0.099f, 0.1f),
+        )?.also { marker ->
+            marker.tag = tag
+            activeMarkers.add(marker)
+        }
     }
 
     private fun onDestroy() {
@@ -290,18 +355,17 @@ internal class RoutePreviewPlatformView(
                 val destinationName = getPlaceNameFromCoordinates(
                     context = fixedContext,
                     latitude = destination.latitude,
-                    longitude = destination.longitude
-                )
-
-                addressTextView.text = destinationName
-
-                timeTextView.text = formatDurationHMS(durationText)
+                    longitude = destination.longitude,
+                ).orEmpty()
+                val destinationAddress = dropoffLocationName.ifBlank { destinationName }
+                val destinationTagLabel = formatDurationHMS(durationText)
                 val pointA = origin
                 val pointB = destination
                 val boundsBuilder = LatLngBounds.Builder().apply {
                     include(pointA)
                     include(pointB)
                     decodedPath.forEach { include(it) }
+                    stopsList.forEach { include(LatLng(it.latitude, it.longitude)) }
                 }
 
                 withContext(Dispatchers.Main) {
@@ -311,19 +375,23 @@ internal class RoutePreviewPlatformView(
                         PolylineOptions().addAll(decodedPath).color(Color.rgb(74, 171, 36)).width(10f)
                     ).also { activePolylines.add(it) }
 
-                    // Optional: Add markers
+                    pendingDriverEtaSeconds?.let { etaTextView.text = etaMinutesLabel(it) }
                     val startBitmap = BitmapDescriptorFactory.fromBitmap(
                         createBitmapFromView(startingPointView)
                     )
-                    val endBitmap = BitmapDescriptorFactory.fromBitmap(
-                        createBitmapFromView(markerView)
+                    startMarker = mMap.addMarker(
+                        MarkerOptions().position(pointA).icon(startBitmap),
                     )
-                    mMap.addMarker(MarkerOptions().position(pointA).icon(startBitmap))
-                        ?.also { activeMarkers.add(it) }
-                    mMap.addMarker(
-                        MarkerOptions().position(decodedPath.last()).icon(endBitmap)
-                            .anchor(0.099f, .1f)
-                    )?.also { activeMarkers.add(it) }
+                    startMarker?.also { activeMarkers.add(it) }
+
+                    addTaggedMarker(
+                        position = decodedPath.last(),
+                        tag = RouteTaggedMarkerTag(
+                            kind = RouteTaggedMarkerKind.DESTINATION,
+                            tagLabel = destinationTagLabel,
+                            address = destinationAddress,
+                        ),
+                    )
                     val routeDistance = calculateDistanceInMeters(pointA, pointB)
                     // Camera logic
                     val padding = getDynamicPadding(routeDistance) - 20
@@ -351,16 +419,23 @@ internal class RoutePreviewPlatformView(
                             }, 1200
                         )
 
-                        //MARK: Stop Location MARKER
                         stopsList.forEachIndexed { index, stop ->
                             val position = LatLng(stop.latitude, stop.longitude)
-
-                            mMap.addMarker(
-                                MarkerOptions().position(position).icon(startBitmap).title(stop.address)
-                            )?.also { activeMarkers.add(it) }
+                            val stopNumber = index + 1
+                            val stopLabel = "Stop $stopNumber"
+                            addTaggedMarker(
+                                position = position,
+                                tag = RouteTaggedMarkerTag(
+                                    kind = RouteTaggedMarkerKind.STOP,
+                                    tagLabel = stopLabel,
+                                    address = stop.address.ifBlank { stopLabel },
+                                    stopNumber = stopNumber,
+                                ),
+                            )
 
                             Log.d(
-                                "RoutesOnMapView", "Added stop marker: $stop at ${stop.latitude}, ${stop.longitude}"
+                                "RoutesOnMapView",
+                                "Added stop marker: $stop at ${stop.latitude}, ${stop.longitude}",
                             )
                         }
 

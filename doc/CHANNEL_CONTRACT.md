@@ -11,6 +11,7 @@
 | `trip-stage` | `{ "tripStage": "<mode wire value>" }` | Updates `RideMapMode` at runtime (also sent automatically when `RideMapView.mode` changes) |
 | `pickup-location` | `{ "lat", "lng" }` | Pickup marker |
 | `drop-off-location` | `{ "lat", "lng" }` | Dropoff marker |
+| `trip-stops` | `{ "stops": [ { "latitude", "longitude", "address"? } ] }` | Numbered intermediate stop markers |
 | `user-location` | `{ "lat", "lng" }` | User marker |
 | `driver-location-update` | `{ "lat", "lng", "bearing"? }` | Android driver updates |
 
