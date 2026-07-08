@@ -68,7 +68,13 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
         }
 
         func mapView(_ mapView: GMSMapView, didTap marker: GMSMarker) -> Bool {
-            true
+            print("🟢 didTap marker at \(marker.position.latitude), \(marker.position.longitude) — userData=\(String(describing: marker.userData))")
+            guard let data = marker.userData as? RouteTaggedMarkerData else {
+                print("🔴 didTap: marker.userData is not RouteTaggedMarkerData — ignoring tap")
+                return false
+            }
+            data.toggleExpanded(on: marker, mapView: mapView)
+            return true
         }
 
         func mapView(
@@ -201,28 +207,41 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
         return bearing
     }
 
+    private func addTaggedMarker(
+        on mapView: GMSMapView,
+        at coordinate: CLLocationCoordinate2D,
+        tagLabel: String,
+        address: String
+    ) {
+        let markerData = RouteTaggedMarkerData(tagLabel: tagLabel, address: address)
+        let marker = GMSMarker(position: coordinate)
+        markerData.attach(to: marker)
+        marker.userData = markerData
+        marker.isTappable = true
+        marker.zIndex = 2
+        marker.map = mapView
+    }
+
+    private func durationTagLabel(seconds: Int) -> String {
+        guard seconds > 0 else { return "1 min" }
+        let minutes = seconds / 60
+        let hours = minutes / 60
+        if hours > 0 {
+            return "\(hours) hr \(minutes % 60) min"
+        }
+        return "\(max(minutes, 1)) min"
+    }
+
     private func addStopMarkers(on mapView: GMSMapView) {
         for stop in stops {
             let stopLabel = "Stop \(stop.index)"
             let markerAddress = stop.address.isEmpty ? stopLabel : stop.address
-            let markerView = StopTaggedMarkerView(stopLabel: stopLabel, address: markerAddress)
-            let host = UIHostingController(rootView: markerView)
-            host.view.backgroundColor = .clear
-            host.view.isUserInteractionEnabled = true
-            host.view.frame = CGRect(
-                x: 0,
-                y: 0,
-                width: UIScreen.screenWidth - 20,
-                height: 48
+            addTaggedMarker(
+                on: mapView,
+                at: stop.coordinate,
+                tagLabel: stopLabel,
+                address: markerAddress
             )
-
-            let marker = GMSMarker(position: stop.coordinate)
-            marker.iconView = host.view
-            marker.groundAnchor = CGPoint(x: 0.0999, y: 0.53)
-            marker.tracksViewChanges = true
-            marker.title = markerAddress
-            marker.isTappable = false
-            marker.map = mapView
             print("📍 Stop marker \(stop.index) at \(stop.coordinate.latitude), \(stop.coordinate.longitude)")
         }
     }
@@ -321,16 +340,27 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
             // MARK: - Safely handle NSNumber / Int / Double values
         func getIntValue(_ value: Any?) -> Int? {
             if let intValue = value as? Int { return intValue }
+            if let int64Value = value as? Int64 { return Int(int64Value) }
             if let doubleValue = value as? Double { return Int(doubleValue) }
             if let numberValue = value as? NSNumber { return numberValue.intValue }
             if let strValue = value as? String, let intFromString = Int(strValue) { return intFromString }
             return nil
         }
-        
+
+        func routeIntValue(_ dict: [String: Any], _ keys: String...) -> Int? {
+            for key in keys {
+                if let value = getIntValue(dict[key]) {
+                    return value
+                }
+            }
+            return nil
+        }
+
         guard
-            let duration = getIntValue(v["durationSeconds"]),
-            let distance = getIntValue(v["distanceMeters"]),
-            let polyline = v["polyline"] as? String
+            let duration = routeIntValue(v, "durationSeconds", "duration_seconds"),
+            let distance = routeIntValue(v, "distanceMeters", "distance_meters"),
+            let polyline = v["polyline"] as? String,
+            !polyline.isEmpty
         else {
             print("❌ Failed to parse routeFetcher data — missing keys or invalid types. Parsed keys: \(v.keys)")
             return
@@ -440,6 +470,8 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
             let startMarker = GMSMarker(position: origin)
             startMarker.iconView = host.view
             startMarker.groundAnchor = CGPoint(x: 0.5, y: 0.82)
+            startMarker.tracksViewChanges = true
+            startMarker.zIndex = 2
             startMarker.isTappable = false
             startMarker.map = mapView
 
@@ -457,40 +489,24 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
         }
 
             // MARK: - Destination Marker
-        reverseGeocode(coordinate: destination) { placeName in
-            DispatchQueue.main.async {
-                    // ✅ Get the actual end coordinate from the decoded polyline
-                guard let lastCoordinate = path.count() > 0 ? path.coordinate(at: path.count() - 1) : nil else {
-                    print("⚠️ No coordinates found in path for destination marker.")
-                    return
-                }
-                
-                let markerTime = self.durationText ?? ""
-                let markerAddress = placeName
-            let markerView = RouteAddressTagMarkerView(
-                tagLabel: markerTime,
-                address: self.dropOffLocationAddress ?? markerAddress
+        let destinationTag = durationTagLabel(seconds: duration)
+        let destinationAddress = dropOffLocationAddress?.isEmpty == false
+            ? dropOffLocationAddress!
+            : "Destination"
+        let destinationCoordinate = path.count() > 0
+            ? path.coordinate(at: path.count() - 1)
+            : destination
+
+        DispatchQueue.main.async {
+            self.addTaggedMarker(
+                on: mapView,
+                at: destinationCoordinate,
+                tagLabel: destinationTag,
+                address: destinationAddress
             )
-            let host = UIHostingController(rootView: markerView)
-            host.view.backgroundColor = .clear
-            host.view.isUserInteractionEnabled = true
-            host.view.frame = CGRect(
-                x: 0,
-                y: 0,
-                width: UIScreen.screenWidth - 20,
-                height: 48
+            print(
+                "📍 Destination marker set at polyline end: \(destinationCoordinate.latitude), \(destinationCoordinate.longitude)"
             )
-                
-                    // ✅ Place the marker on the actual last coordinate of the polyline
-                let marker = GMSMarker(position: lastCoordinate)
-                marker.iconView = host.view
-                marker.groundAnchor = CGPoint(x: 0.0999, y: 0.53)
-                marker.tracksViewChanges = true
-                marker.isTappable = false
-                marker.map = mapView
-                
-                print("📍 Destination marker set at polyline end: \(lastCoordinate.latitude), \(lastCoordinate.longitude)")
-            }
         }
        
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {

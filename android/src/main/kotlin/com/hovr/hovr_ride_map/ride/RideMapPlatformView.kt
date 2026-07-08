@@ -75,7 +75,10 @@ internal class RideMapPlatformView(
     private var startMarker: Marker? = null
     private var destMarker: Marker? = null
     private var carMarker: Marker? = null
+    /** Remaining path drawn on the map (driver → destination). */
     private var polylinePoints: List<LatLng> = emptyList()
+    /** Full decoded route used to re-trim completed segments as the car moves. */
+    private var sourceRoutePath: List<LatLng> = emptyList()
     private var currentPolylineIndex = 0
     private val activeMarkers = mutableListOf<Marker>()
 
@@ -167,6 +170,7 @@ internal class RideMapPlatformView(
                 val lng = arg?.get("lng") as? Double
                 if (lat != null && lng != null) {
                     lastDropoffLatLng = LatLng(lat, lng)
+                    onMain { refreshDropOffMarkerFromPolyline() }
                     result.success(null)
                 } else {
                     result.error("INVALID_ARGS", "Missing dropoff lat/lng", null)
@@ -217,6 +221,7 @@ internal class RideMapPlatformView(
                 hasFittedCameraToRoute = false
                 userHasInteractedWithMap = false
                 polylinePoints = emptyList()
+                sourceRoutePath = emptyList()
                 currentPolylineIndex = 0
 
                 clearRouteOverlays()
@@ -443,6 +448,7 @@ internal class RideMapPlatformView(
                         drawRoute(route)
                     } else {
                         Log.d(TAG, "Route already drawn")
+                        autoFitFullPolylineCamera()
                     }
                 } else {
                     Log.d(TAG, "No route to restore")
@@ -574,6 +580,7 @@ internal class RideMapPlatformView(
                 activePolylines.isNotEmpty()
             ) {
                 Log.d(TAG, "Skipping unchanged driver route")
+                maybeAutoFitCameraToFullPolylineOnce()
                 return@launch
             }
 
@@ -594,54 +601,31 @@ internal class RideMapPlatformView(
             userMarker?.remove()
             userMarker = null
 
-            polylinePoints = displayPath
-            currentPolylineIndex = 0
+            sourceRoutePath = decodedPath
+            applyDisplayRoutePath(displayPath, map)
+            placeRouteMarkersIfNeeded(displayPath, map)
 
-            bearingSmoother.reset()
-            segmentBearings = if (displayPath.size >= 2) {
-                FloatArray(displayPath.size) { i ->
-                    if (i < displayPath.size - 1) {
-                        calculateBearing(displayPath[i], displayPath[i + 1])
-                    } else {
-                        calculateBearing(displayPath[i - 1], displayPath[i])
-                    }
-                }
-            } else {
-                floatArrayOf(0f)
-            }
-
-            updateActivePolyline(displayPath, map)
-            placeRouteMarkersIfNeeded(decodedPath, map)
-
-            maybeAutoFitCameraForMeetPickupOnce()
+            maybeAutoFitCameraToFullPolylineOnce()
 
             Log.d(TAG, "✅ Driver-anchored route applied")
         }
     }
 
-    private fun isMeetAtPickupStage(): Boolean {
-        return currentTripStage == "meetAtPickup" ||
-            currentTripStage == "driverWaitingAtPickup"
-    }
+    private fun hasActiveRouteForCameraFit(): Boolean =
+        sourceRoutePath.size >= 2 || polylinePoints.size >= 2
 
-    /** One-time camera fit when the first stream route appears during meet-at-pickup. */
-    private fun maybeAutoFitCameraForMeetPickupOnce() {
-        if (!isMeetAtPickupStage()) return
+    /** One-time full-route camera fit when a polyline first appears (app open / restore). */
+    private fun maybeAutoFitCameraToFullPolylineOnce() {
         if (userHasInteractedWithMap || hasFittedCameraToRoute) return
-
-        val map = googleMap ?: return
-        if (!mapViewReady) return
-
-        val mapWidth = mapView.width
-        val mapHeight = mapView.height
-        val state = buildRecenterState()
-        val fitted = RideMapRecenter.applyFit(map, "driverToPickup", state, mapWidth, mapHeight) ||
-            RideMapRecenter.fitFullPolyline(map, state, mapWidth, mapHeight)
-        if (fitted) {
+        if (!hasActiveRouteForCameraFit()) return
+        if (autoFitFullPolylineCamera()) {
             hasFittedCameraToRoute = true
-            Log.d(TAG, "One-time auto-fit for meet-at-pickup route")
+            Log.d(TAG, "One-time auto-fit to full polyline")
         }
     }
+
+    /** Same camera behavior as tapping recenter during an active trip. */
+    private fun autoFitFullPolylineCamera(): Boolean = performRecenter("fullPolyline")
 
     private fun resolvedDriverLatLng(fallback: LatLng): LatLng = lastDriverLatLng ?: fallback
 
@@ -668,7 +652,7 @@ internal class RideMapPlatformView(
     }
 
     private fun placeRouteMarkersIfNeeded(path: List<LatLng>, map: GoogleMap) {
-        val end = lastDropoffLatLng ?: path.last()
+        val end = RideMapRecenter.dropOffMarkerPosition(path, lastDropoffLatLng) ?: return
         destMarker?.remove()
         destMarker = map.addMarker(
             MarkerOptions()
@@ -680,6 +664,14 @@ internal class RideMapPlatformView(
                 .zIndex(300f),
         )
         redrawStopMarkers()
+    }
+
+    /** Re-place drop-off on the current polyline end after channel updates. */
+    private fun refreshDropOffMarkerFromPolyline() {
+        val map = googleMap ?: return
+        if (!mapViewReady) return
+        if (polylinePoints.isEmpty()) return
+        placeRouteMarkersIfNeeded(polylinePoints, map)
     }
 
     private fun clearStopMarkers() {
@@ -721,6 +713,9 @@ internal class RideMapPlatformView(
         return lastDriverLatLng != null || tripCarMarkers?.marker(tripDriverId) != null
     }
 
+    private var lastOffScreenRecenterAtMs = 0L
+    private val offScreenRecenterMinIntervalMs = 1_500L
+
     private fun upsertTripDriver(lat: Double, lng: Double, bearing: Float? = null) {
         val markers = tripCarMarkers ?: return
         markers.upsert(
@@ -736,6 +731,69 @@ internal class RideMapPlatformView(
             ),
         )
         lastDriverLatLng = LatLng(lat, lng)
+        trimCompletedPolylineBehindDriver()
+        maybeZoomOutWhenDriverLeavesScreen()
+    }
+
+    /**
+     * Drops the completed route behind the car so only the remaining path is drawn.
+     */
+    private fun trimCompletedPolylineBehindDriver() {
+        val map = googleMap ?: return
+        if (!mapViewReady) return
+        val driver = lastDriverLatLng ?: return
+        if (sourceRoutePath.size < 2) return
+
+        val displayPath = RideMapRoutePath.routePathForDisplay(sourceRoutePath, driver) ?: return
+        if (displayPath.size == polylinePoints.size &&
+            displayPath.firstOrNull() == polylinePoints.firstOrNull() &&
+            displayPath.lastOrNull() == polylinePoints.lastOrNull()
+        ) {
+            return
+        }
+        applyDisplayRoutePath(displayPath, map)
+    }
+
+    private fun applyDisplayRoutePath(displayPath: List<LatLng>, map: GoogleMap) {
+        polylinePoints = displayPath
+        currentPolylineIndex = 0
+        bearingSmoother.reset()
+        segmentBearings = if (displayPath.size >= 2) {
+            FloatArray(displayPath.size) { i ->
+                if (i < displayPath.size - 1) {
+                    calculateBearing(displayPath[i], displayPath[i + 1])
+                } else {
+                    calculateBearing(displayPath[i - 1], displayPath[i])
+                }
+            }
+        } else {
+            floatArrayOf(0f)
+        }
+        updateActivePolyline(displayPath, map)
+    }
+
+    /**
+     * If the car drifts outside the camera frustum, expand the viewport to keep
+     * driver + destination (route end) on screen.
+     */
+    private fun maybeZoomOutWhenDriverLeavesScreen() {
+        val map = googleMap ?: return
+        if (!mapViewReady) return
+        if (userHasInteractedWithMap) return
+
+        val now = System.currentTimeMillis()
+        if (now - lastOffScreenRecenterAtMs < offScreenRecenterMinIntervalMs) return
+
+        val fitted = RideMapRecenter.ensureDriverVisible(
+            map,
+            buildRecenterState(),
+            mapView.width,
+            mapView.height,
+        )
+        if (fitted) {
+            lastOffScreenRecenterAtMs = now
+            Log.d(TAG, "Zoomed out — driver left the visible map region")
+        }
     }
 
     private fun seedTripDriverAt(position: LatLng, bearing: Float) {
@@ -933,6 +991,7 @@ internal class RideMapPlatformView(
         lastPickupLatLng = lastPickupLatLng,
         lastUserLatLng = lastUserLatLng,
         polylinePoints = polylinePoints,
+        fullRoutePoints = sourceRoutePath,
         followZoom = followZoom,
     )
 

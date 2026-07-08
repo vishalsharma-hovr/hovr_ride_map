@@ -19,6 +19,10 @@ enum RideMapRecenterLogic {
     ) -> Bool {
         NSLog("🎯 [hovr_ride_map] performRecenter fit=\(fit ?? "default")")
 
+        if fit == "fullPolyline" {
+            if fitFullPolyline(on: mapView, encoded: context.polylineEncoded) { return true }
+        }
+
         if fit == "driverToDestination" {
             if fitDriverToDestination(on: mapView, context: context) { return true }
         }

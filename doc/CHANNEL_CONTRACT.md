@@ -4,7 +4,7 @@
 
 | Method | Arguments | Notes |
 |--------|-----------|-------|
-| `recenter-map` | none, `{ "fit": "driverToDestination" }`, or `{ "fit": "driverToPickup" }` | Recenters camera; `driverToDestination` fits cab + dropoff; `driverToPickup` fits cab + pickup (includes rider when cab is at pickup) |
+| `recenter-map` | none, `{ "fit": "driverToDestination" }`, `{ "fit": "driverToPickup" }`, or `{ "fit": "fullPolyline" }` | Recenters camera; `driverToDestination` fits cab + dropoff; `driverToPickup` fits cab + pickup (includes rider when cab is at pickup); `fullPolyline` zooms out to the full route path |
 | `polylines-channel` | `{ "polyline": "<encoded>" }` | Draw route |
 | `clear-route` | none | Clears polylines and markers |
 | `eta-channel` | `{ "eta": <seconds int> }` | Native ETA display |

@@ -20,6 +20,8 @@ internal object RideMapRecenter {
       val lastPickupLatLng: LatLng?,
       val lastUserLatLng: LatLng?,
       val polylinePoints: List<LatLng>,
+      /** Full decoded route — used by [fitFullPolyline] when available. */
+      val fullRoutePoints: List<LatLng> = emptyList(),
       val followZoom: Float,
   )
 
@@ -50,9 +52,39 @@ internal object RideMapRecenter {
   }
 
   fun resolveDestination(state: State): LatLng? {
-    return state.destPosition
+    // Prefer the drawn polyline end so the camera matches the drop-off marker.
+    return state.polylinePoints.lastOrNull()
+        ?: state.destPosition
         ?: state.lastDropoffLatLng
-        ?: state.polylinePoints.lastOrNull()
+  }
+
+  /** True when [point] is inside the current camera frustum (including padding). */
+  fun isPointVisible(map: GoogleMap, point: LatLng): Boolean {
+    return try {
+      map.projection.visibleRegion.latLngBounds.contains(point)
+    } catch (_: Exception) {
+      true
+    }
+  }
+
+  /**
+   * When the driver has left the screen, expand the camera so driver + remaining
+   * route destination are framed. Returns true if a camera animation started.
+   */
+  fun ensureDriverVisible(
+      map: GoogleMap,
+      state: State,
+      mapWidth: Int,
+      mapHeight: Int,
+  ): Boolean {
+    val driver = resolveDriver(state) ?: return false
+    if (isPointVisible(map, driver)) return false
+    return fitDriverToDestination(map, state, mapWidth, mapHeight)
+  }
+
+  /** Drop-off pin always sits on the last vertex of the drawn route. */
+  fun dropOffMarkerPosition(path: List<LatLng>, fallbackDropoff: LatLng?): LatLng? {
+    return path.lastOrNull() ?: fallbackDropoff
   }
 
   fun applyFit(
@@ -65,11 +97,16 @@ internal object RideMapRecenter {
     return when (fit) {
       "driverToDestination" -> fitDriverToDestination(map, state, mapWidth, mapHeight)
       "driverToPickup" -> fitDriverToPickup(map, state, mapWidth, mapHeight)
+      "fullPolyline" -> fitFullPolyline(map, state, mapWidth, mapHeight)
       else -> false
     }
   }
 
-  fun canFitFullPolyline(state: State): Boolean = state.polylinePoints.size >= 2
+  fun canFitFullPolyline(state: State): Boolean = routePointsForFullFit(state).size >= 2
+
+  private fun routePointsForFullFit(state: State): List<LatLng> {
+    return state.fullRoutePoints.takeIf { it.size >= 2 } ?: state.polylinePoints
+  }
 
   fun fitFullPolyline(
       map: GoogleMap,
@@ -77,12 +114,13 @@ internal object RideMapRecenter {
       mapWidth: Int,
       mapHeight: Int,
   ): Boolean {
-    if (state.polylinePoints.size < 2) return false
+    val path = routePointsForFullFit(state)
+    if (path.size < 2) return false
     val bounds = LatLngBounds.builder().apply {
-      state.polylinePoints.forEach { include(it) }
+      path.forEach { include(it) }
     }.build()
     val padding = getDynamicPadding(
-        calculateDistanceInMeters(state.polylinePoints.first(), state.polylinePoints.last())
+        calculateDistanceInMeters(path.first(), path.last())
     )
     return safeAnimateToBounds(map, bounds, padding, mapWidth, mapHeight)
   }

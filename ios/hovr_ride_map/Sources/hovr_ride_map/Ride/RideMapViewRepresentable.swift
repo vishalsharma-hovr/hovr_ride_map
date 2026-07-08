@@ -54,6 +54,7 @@ struct RideMapViewRepresentable: UIViewRepresentable {
         var activePolyline: GMSPolyline?
         var traveledPolyline: GMSPolyline?
         var lastProcessedPolyline: String = ""
+        var sourceRoutePath: GMSPath?
         var hasFittedCameraToRoute = false
         var userHasInteractedWithMap = false
 
@@ -129,6 +130,18 @@ struct RideMapViewRepresentable: UIViewRepresentable {
             )
             carMarkers.upsert(fixes: [fix])
             lastDriverCoordinate = coordinate
+            trimCompletedPolylineBehindDriver()
+        }
+
+        /// Drops completed route behind the car so only the remaining path is drawn.
+        private func trimCompletedPolylineBehindDriver() {
+            guard let mapView, let sourcePath = sourceRoutePath, let driver = lastDriverCoordinate else {
+                return
+            }
+            guard let displayPath = routePathForDisplay(from: sourcePath, driver: driver) else {
+                return
+            }
+            updateActivePolyline(path: displayPath, on: mapView)
         }
         
         func performRecenterRequest(fit: String?) {
@@ -147,6 +160,14 @@ struct RideMapViewRepresentable: UIViewRepresentable {
         init(_ parent: RideMapViewRepresentable) {
             self.parent = parent
             super.init()
+
+            NotificationCenter.default.addObserver(
+                forName: UIApplication.willEnterForegroundNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.autoFitFullPolylineOnForeground()
+            }
 
             parent.controller.$shouldRecenter
                 .receive(on: DispatchQueue.main)
@@ -378,13 +399,14 @@ struct RideMapViewRepresentable: UIViewRepresentable {
         }
 
         func placeRouteMarkersIfNeeded(path: GMSPath, on mapView: GMSMapView) {
-            if let dropoff = TripDropoffController.shared.coordinate {
+            // Prefer the drawn route endpoint so the pin sits on the polyline end.
+            if path.count() > 0 {
+                addDropOffMarker(at: path.coordinate(at: path.count() - 1), on: mapView)
+            } else if let dropoff = TripDropoffController.shared.coordinate {
                 addDropOffMarker(
                     at: CLLocationCoordinate2D(latitude: dropoff.lat, longitude: dropoff.lng),
                     on: mapView
                 )
-            } else if path.count() > 0 {
-                addDropOffMarker(at: path.coordinate(at: path.count() - 1), on: mapView)
             }
             redrawStopMarkers(on: mapView)
         }
@@ -397,6 +419,7 @@ struct RideMapViewRepresentable: UIViewRepresentable {
         ) {
             guard !encoded.isEmpty else { return }
             if !force, encoded == lastProcessedPolyline, activePolyline != nil {
+                maybeAutoFitCameraToFullPolylineOnce(on: mapView)
                 return
             }
             guard let path = gmsPath(fromEncodedPolyline: encoded), path.count() > 1 else {
@@ -411,34 +434,29 @@ struct RideMapViewRepresentable: UIViewRepresentable {
             }
 
             lastProcessedPolyline = encoded
+            sourceRoutePath = path
             updateActivePolyline(path: displayPath, on: mapView)
-            placeRouteMarkersIfNeeded(path: path, on: mapView)
-            maybeAutoFitCameraForMeetPickupOnce(on: mapView, encoded: encoded)
+            placeRouteMarkersIfNeeded(path: displayPath, on: mapView)
+            maybeAutoFitCameraToFullPolylineOnce(on: mapView)
 
             print("✅ Driver-anchored route applied")
         }
 
-        /// One-time camera fit when the first stream route appears during meet-at-pickup.
-        func maybeAutoFitCameraForMeetPickupOnce(on mapView: GMSMapView, encoded: String) {
-            let stage = TripStageController.shared.tripStage
-            guard stage == "meetAtPickup" || stage == "driverWaitingAtPickup" else { return }
+        /// One-time full-route camera fit when a polyline first appears (app open / restore).
+        func maybeAutoFitCameraToFullPolylineOnce(on mapView: GMSMapView) {
             guard !userHasInteractedWithMap, !hasFittedCameraToRoute else { return }
+            guard sourceRoutePath != nil || activePolyline != nil else { return }
 
-            let handled = RideMapRecenterLogic.perform(
-                on: mapView,
-                fit: "driverToPickup",
-                context: RideMapRecenterLogic.Context(
-                    polylineEncoded: encoded,
-                    driverLocation: parent.driverLocation.driverLocation,
-                    carMarker: carMarker,
-                    dropOffMarker: dropOffMarker,
-                    defaultZoom: parent.zoom
-                )
-            )
-            if handled {
-                hasFittedCameraToRoute = true
-                print("🎯 One-time auto-fit for meet-at-pickup route")
-            }
+            parent.performRecenter(on: mapView, coordinator: self, fit: "fullPolyline")
+            hasFittedCameraToRoute = true
+            print("🎯 One-time auto-fit to full polyline")
+        }
+
+        /// Same camera behavior as tapping recenter during an active trip.
+        func autoFitFullPolylineOnForeground() {
+            guard let mapView else { return }
+            guard sourceRoutePath != nil || activePolyline != nil else { return }
+            performRecenterRequest(fit: "fullPolyline")
         }
 
         func drawRoute(encoded: String, on mapView: GMSMapView) {

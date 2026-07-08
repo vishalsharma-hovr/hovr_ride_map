@@ -23,6 +23,7 @@ class RideMapRecenterTest {
         lastDropoffLatLng: LatLng? = null,
         lastPickupLatLng: LatLng? = null,
         polylinePoints: List<LatLng> = listOf(polylineStart, polylineEnd),
+        fullRoutePoints: List<LatLng> = emptyList(),
     ) = RideMapRecenter.State(
         lastDriverLatLng = lastDriverLatLng,
         carPosition = carPosition,
@@ -32,6 +33,7 @@ class RideMapRecenterTest {
         lastPickupLatLng = lastPickupLatLng,
         lastUserLatLng = null,
         polylinePoints = polylinePoints,
+        fullRoutePoints = fullRoutePoints,
         followZoom = 17f,
     )
 
@@ -81,21 +83,43 @@ class RideMapRecenterTest {
     }
 
     @Test
-    fun resolveDestination_prefersDestMarkerThenDropoffThenPolylineEnd() {
-        assertEquals(
-            dropoff,
-            RideMapRecenter.resolveDestination(baseState(destPosition = dropoff)),
-        )
-        assertEquals(
-            dropoff,
-            RideMapRecenter.resolveDestination(baseState(lastDropoffLatLng = dropoff)),
-        )
+    fun resolveDestination_prefersPolylineEndThenDestThenDropoff() {
         assertEquals(
             polylineEnd,
             RideMapRecenter.resolveDestination(
-                baseState(polylinePoints = listOf(polylineStart, polylineEnd)),
+                baseState(
+                    destPosition = dropoff,
+                    lastDropoffLatLng = LatLng(0.0, 0.0),
+                    polylinePoints = listOf(polylineStart, polylineEnd),
+                ),
             ),
         )
+        assertEquals(
+            dropoff,
+            RideMapRecenter.resolveDestination(baseState(destPosition = dropoff, polylinePoints = emptyList())),
+        )
+        assertEquals(
+            dropoff,
+            RideMapRecenter.resolveDestination(
+                baseState(lastDropoffLatLng = dropoff, polylinePoints = emptyList()),
+            ),
+        )
+    }
+
+    @Test
+    fun dropOffMarkerPosition_usesPolylineEndOverChannelDropoff() {
+        assertEquals(
+            polylineEnd,
+            RideMapRecenter.dropOffMarkerPosition(
+                listOf(polylineStart, polylineEnd),
+                fallbackDropoff = dropoff,
+            ),
+        )
+        assertEquals(
+            dropoff,
+            RideMapRecenter.dropOffMarkerPosition(emptyList(), fallbackDropoff = dropoff),
+        )
+        assertNull(RideMapRecenter.dropOffMarkerPosition(emptyList(), fallbackDropoff = null))
     }
 
     @Test
@@ -120,6 +144,20 @@ class RideMapRecenterTest {
         assertTrue(
             RideMapRecenter.canFitFullPolyline(
                 baseState(polylinePoints = listOf(polylineStart, polylineEnd)),
+            ),
+        )
+    }
+
+    @Test
+    fun canFitFullPolyline_prefersFullRoutePointsOverTrimmedPolyline() {
+        val trimmed = listOf(polylineEnd)
+        val full = listOf(polylineStart, LatLng(37.15, -122.15), polylineEnd)
+        assertFalse(
+            RideMapRecenter.canFitFullPolyline(baseState(polylinePoints = trimmed)),
+        )
+        assertTrue(
+            RideMapRecenter.canFitFullPolyline(
+                baseState(polylinePoints = trimmed, fullRoutePoints = full),
             ),
         )
     }

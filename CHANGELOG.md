@@ -1,5 +1,7 @@
 ## 1.0.3
 
+- In-trip recenter: `fullPolyline` fit zooms out to show the entire route path.
+- In-trip map: continuously trim completed polyline behind the car as the driver moves.
 - Route preview: show intermediate stops with destination-style address tags; tap expands to two lines with ellipsis.
 - Native map chrome: disable Google Maps recenter, compass, toolbar, and POI/marker place UI on home, ride, and route-preview maps.
 - In-trip ride map: stream-polygon-driven routes, movement-based driver bearing, one-time meet-at-pickup camera fit, and gesture-aware recenter.

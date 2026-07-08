@@ -7,6 +7,7 @@
 
 import CoreLocation
 import Foundation
+import GoogleMaps
 import SwiftUI
 import UIKit
 import Flutter
@@ -59,7 +60,8 @@ struct RouteStopLocation {
 struct RouteAddressTagMarkerView: View {
     let tagLabel: String
     let address: String
-    @State private var isExpanded = false
+    var isExpanded: Bool = false
+    var onTap: (() -> Void)?
 
     private var markerWidth: CGFloat {
         isExpanded ? UIScreen.screenWidth - 20 : UIScreen.screenWidth / 2
@@ -86,7 +88,7 @@ struct RouteAddressTagMarkerView: View {
                             .frame(width: 20, height: 20)
                             .overlay {
                                 Circle()
-                                    .fill(Color(red: 74, green: 171, blue: 36))
+                                    .fill(Color(red: 74 / 255, green: 171 / 255, blue: 36 / 255))
                                     .frame(width: 12, height: 12)
                             }
 
@@ -114,9 +116,7 @@ struct RouteAddressTagMarkerView: View {
         .cornerRadius(50)
         .contentShape(Rectangle())
         .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.25)) {
-                isExpanded.toggle()
-            }
+            onTap?()
         }
     }
 }
@@ -149,10 +149,199 @@ struct StopTaggedMarkerView: View {
     }
 }
 
+/// Draws route preview destination/stop markers directly to a bitmap (matches Android `RouteTaggedMarkerBitmap`).
+private enum RouteTaggedMarkerBitmap {
+    private static let collapsedAddressWidth: CGFloat = 100
+    private static let routeGreenBright = UIColor(red: 74 / 255, green: 171 / 255, blue: 36 / 255, alpha: 1)
+    private static let routeGreenPill = UIColor(red: 39 / 255, green: 90 / 255, blue: 19 / 255, alpha: 1)
+    private static let routeGreenRing = UIColor(red: 74 / 255, green: 171 / 255, blue: 36 / 255, alpha: 1)
+    private static let routeGreenRingInner = UIColor(red: 208 / 255, green: 238 / 255, blue: 196 / 255, alpha: 1)
+
+    static func bitmapFor(tagLabel: String, address: String, expanded: Bool) -> UIImage {
+        let displayAddress = address.isEmpty ? tagLabel : address
+        let addressFont = UIFont.systemFont(ofSize: 13)
+        let tagFont = UIFont.systemFont(ofSize: 13, weight: .bold)
+        let addressWidth = addressWidth(expanded: expanded)
+        let addressHeight = addressBlockHeight(
+            text: displayAddress,
+            width: addressWidth,
+            expanded: expanded,
+            font: addressFont
+        )
+
+        let tagWidth = ceil((tagLabel as NSString).size(withAttributes: [.font: tagFont]).width)
+        let pillWidth = 14 + tagWidth + 24
+        let totalWidth = pillWidth + 8 + addressWidth + 8 + 20 + 4
+        let verticalInset: CGFloat = expanded ? 6 : 0
+        let totalHeight = max(30, addressHeight) + verticalInset * 2
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = UIScreen.main.scale
+        format.opaque = false
+
+        let size = CGSize(width: totalWidth, height: totalHeight)
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        return renderer.image { _ in
+            let bounds = CGRect(origin: .zero, size: size)
+            UIColor.white.setFill()
+            UIBezierPath(roundedRect: bounds, cornerRadius: 15).fill()
+
+            let pillY = (totalHeight - 30) / 2
+            let pillRect = CGRect(x: 0, y: pillY, width: pillWidth, height: 30)
+            let pillPath = UIBezierPath(
+                roundedRect: pillRect,
+                byRoundingCorners: [.topLeft, .bottomLeft],
+                cornerRadii: CGSize(width: 15, height: 15)
+            )
+            routeGreenPill.setFill()
+            pillPath.fill()
+
+            let iconOrigin = CGPoint(x: pillRect.minX + 12, y: pillRect.midY - 7)
+            drawRouteIcon(at: iconOrigin)
+
+            let tagTextSize = (tagLabel as NSString).size(withAttributes: [.font: tagFont])
+            let tagRect = CGRect(
+                x: iconOrigin.x + 19,
+                y: pillY + (30 - tagTextSize.height) / 2,
+                width: pillWidth - (iconOrigin.x + 19 - pillRect.minX) - 6,
+                height: tagTextSize.height
+            )
+            let tagStyle = NSMutableParagraphStyle()
+            tagStyle.lineBreakMode = .byTruncatingTail
+            (tagLabel as NSString).draw(
+                in: tagRect,
+                withAttributes: [
+                    .font: tagFont,
+                    .foregroundColor: UIColor.white,
+                    .paragraphStyle: tagStyle,
+                ]
+            )
+
+            let addressX = pillWidth + 8
+            let addressY = expanded ? verticalInset : (totalHeight - addressHeight) / 2
+            let addressRect = CGRect(x: addressX, y: addressY, width: addressWidth, height: addressHeight)
+            let addressStyle = NSMutableParagraphStyle()
+            addressStyle.lineBreakMode = .byTruncatingTail
+            if expanded {
+                addressStyle.maximumLineHeight = addressFont.lineHeight
+                addressStyle.minimumLineHeight = addressFont.lineHeight
+            }
+            (displayAddress as NSString).draw(
+                with: addressRect,
+                options: [.usesLineFragmentOrigin, .usesFontLeading, .truncatesLastVisibleLine],
+                attributes: [
+                    .font: addressFont,
+                    .foregroundColor: UIColor.black,
+                    .paragraphStyle: addressStyle,
+                ],
+                context: nil
+            )
+
+            let chevronX = addressX + addressWidth + 8
+            let chevronY = (totalHeight - 20) / 2
+            if let chevron = UIImage(systemName: "chevron.right")?
+                .withTintColor(.black, renderingMode: .alwaysOriginal) {
+                chevron.draw(in: CGRect(x: chevronX, y: chevronY, width: 20, height: 20))
+            }
+        }
+    }
+
+    // The iOS Maps SDK fails to render an over-wide marker icon (renders blank),
+    // so the expanded state gains height via a 2nd line rather than screen width.
+    private static let expandedAddressWidth: CGFloat = 150
+
+    private static func addressWidth(expanded: Bool) -> CGFloat {
+        expanded ? expandedAddressWidth : collapsedAddressWidth
+    }
+
+    private static func addressBlockHeight(
+        text: String,
+        width: CGFloat,
+        expanded: Bool,
+        font: UIFont
+    ) -> CGFloat {
+        let singleLine = ceil(font.lineHeight)
+        guard expanded else { return singleLine }
+
+        let maxHeight = ceil(font.lineHeight * 2)
+        let rect = (text as NSString).boundingRect(
+            with: CGSize(width: width, height: maxHeight),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font],
+            context: nil
+        )
+        return min(max(ceil(rect.height), singleLine), maxHeight)
+    }
+
+    private static func drawRouteIcon(at origin: CGPoint) {
+        let outer = CGRect(x: origin.x, y: origin.y, width: 14, height: 14)
+        routeGreenRing.setFill()
+        UIBezierPath(ovalIn: outer).fill()
+
+        let inner = outer.insetBy(dx: 3, dy: 3)
+        routeGreenRingInner.setFill()
+        UIBezierPath(ovalIn: inner).fill()
+
+        let center = outer.insetBy(dx: 5, dy: 5)
+        routeGreenBright.setFill()
+        UIBezierPath(ovalIn: center).fill()
+    }
+}
+
+final class RouteTaggedMarkerData: NSObject {
+    let tagLabel: String
+    let address: String
+    var expanded: Bool
+
+    init(tagLabel: String, address: String, expanded: Bool = false) {
+        self.tagLabel = tagLabel
+        self.address = address
+        self.expanded = expanded
+        super.init()
+    }
+
+    /// Wrap the pre-rendered bitmap in a plain `UIImageView` and drive it through
+    /// `iconView` + `tracksViewChanges` — the same marker pattern the start/ETA
+    /// pin uses successfully in this map. A static wide `icon` UIImage does not
+    /// paint reliably, but an `iconView` image view does.
+    private func makeIconView() -> UIImageView {
+        let image = RouteTaggedMarkerBitmap.bitmapFor(
+            tagLabel: tagLabel,
+            address: address,
+            expanded: expanded
+        )
+        print("🖼️ RouteTaggedMarker makeIconView: expanded=\(expanded) iconSize=\(image.size) tag=\(tagLabel)")
+        let imageView = UIImageView(image: image)
+        imageView.frame = CGRect(origin: .zero, size: image.size)
+        imageView.contentMode = .center
+        imageView.backgroundColor = .clear
+        return imageView
+    }
+
+    private func apply(to marker: GMSMarker) {
+        marker.icon = nil
+        marker.iconView = makeIconView()
+        marker.groundAnchor = CGPoint(x: 0.099, y: 0.1)
+        marker.appearAnimation = .none
+        marker.tracksViewChanges = true
+    }
+
+    func attach(to marker: GMSMarker) {
+        apply(to: marker)
+    }
+
+    func toggleExpanded(on marker: GMSMarker, mapView: GMSMapView) {
+        expanded.toggle()
+        print("🔁 toggleExpanded -> expanded=\(expanded) — swapping iconView")
+        marker.iconView = makeIconView()
+        marker.tracksViewChanges = true
+        print("✅ toggleExpanded done — iconView swapped, size=\(marker.iconView?.frame.size ?? .zero)")
+    }
+}
+
 struct GoogleMapsWithRoute: View {
     var result: FlutterResult?
     var flutterMethod: FlutterMethodCall?
-    @State var locationManager = LocationManager()
     @State private var zoomLevel: Float = 15.0
     @State var mapController: RecenterMapController
     var destinationLocation: CLLocationCoordinate2D
@@ -166,25 +355,17 @@ struct GoogleMapsWithRoute: View {
     var stops: [RouteStopLocation] = []
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            if locationManager.location != nil {
-                GoogleMapsWithRouteViewController(
-                    zoom: zoomLevel,
-                    destinationLocation: destinationLocation,
-                    originLocation: originLocation,
-                    startLocationAddress: pickUpAddress,
-                    dropOffLocationAddress: dropOffAddress,
-                    controller: mapController,
-                    routeFetcher: routeData,
-                    stops: stops
-                )
-                .edgesIgnoringSafeArea(.all)
-            } else {
-                VStack {
-                    ProgressView()
-                }
-            }
-        }
+        GoogleMapsWithRouteViewController(
+            zoom: zoomLevel,
+            destinationLocation: destinationLocation,
+            originLocation: originLocation,
+            startLocationAddress: pickUpAddress,
+            dropOffLocationAddress: dropOffAddress,
+            controller: mapController,
+            routeFetcher: routeData,
+            stops: stops
+        )
+        .edgesIgnoringSafeArea(.all)
     }
 }
 

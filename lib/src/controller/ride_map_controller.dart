@@ -49,6 +49,11 @@ class RideMapController {
     await _recenterWithFit('driverToPickup');
   }
 
+  /// Zooms out so the full in-trip polyline path is visible.
+  Future<void> recenterFullPolyline() async {
+    await _recenterWithFit('fullPolyline');
+  }
+
   Future<void> _recenterWithFit(String fit) async {
     final args = <String, Object>{'fit': fit};
     await _safeInvoke(_rideViewChannel, 'recenter-map', arguments: args);
