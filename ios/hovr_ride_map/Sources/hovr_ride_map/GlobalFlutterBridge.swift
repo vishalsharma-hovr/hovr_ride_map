@@ -65,7 +65,11 @@ class GlobalFlutterBridge: NSObject {
             }
             print("🛰️ [Bridge] Received DRIVER LOCATION data from Flutter: \(args)")
             DispatchQueue.main.async {
-                DriverLocationController.shared.driverLocation = args
+                guard let normalized = normalizedDriverLocationDict(from: args) else {
+                    print("⚠️ [Bridge] Invalid driver location args: \(args)")
+                    return
+                }
+                DriverLocationController.shared.driverLocation = normalized
             }
             result("ok")
         case "polylines-channel":
@@ -86,6 +90,11 @@ class GlobalFlutterBridge: NSObject {
             print("🛰️ [Bridge] Received clear route command from Flutter:")
             DispatchQueue.main.async {
                 PolylineController.shared.clearPolyline()
+            }
+            result("ok")
+        case "clear-driver-location":
+            DispatchQueue.main.async {
+                DriverLocationController.shared.clearDriverLocation()
             }
             result("ok")
         case "clear-pickup-user-markers":

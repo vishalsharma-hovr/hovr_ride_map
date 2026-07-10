@@ -67,28 +67,23 @@ class DriverLocationController: ObservableObject {
     }
 
     private func saveDriverLocation() {
-        guard
-            let lat = driverLocation["lat"] as? Double,
-            let lng = driverLocation["lng"] as? Double
-        else {
+        guard let normalized = normalizedDriverLocationDict(from: driverLocation) else {
             return
         }
 
-        let dict: [String: Any] = [
-            "lat": lat,
-            "lng": lng
-        ]
-
-        UserDefaults.standard.set(dict, forKey: userDefaultsKey)
-        print("💾 Driver location saved: \(lat), \(lng)")
+        UserDefaults.standard.set(normalized, forKey: userDefaultsKey)
+        if let lat = normalized["lat"] as? Double, let lng = normalized["lng"] as? Double {
+            print("💾 Driver location saved: \(lat), \(lng)")
+        }
     }
 
     private func loadDriverLocation() {
         if let saved = UserDefaults.standard.dictionary(forKey: userDefaultsKey),
-           let lat = saved["lat"] as? Double,
-           let lng = saved["lng"] as? Double {
-            driverLocation = ["lat": lat, "lng": lng]
-            print("📥 Loaded saved driver location: \(lat), \(lng)")
+           let normalized = normalizedDriverLocationDict(from: saved) {
+            driverLocation = normalized
+            if let lat = normalized["lat"] as? Double, let lng = normalized["lng"] as? Double {
+                print("📥 Loaded saved driver location: \(lat), \(lng)")
+            }
         } else {
             print("⚠️ No saved driver location found in UserDefaults")
         }

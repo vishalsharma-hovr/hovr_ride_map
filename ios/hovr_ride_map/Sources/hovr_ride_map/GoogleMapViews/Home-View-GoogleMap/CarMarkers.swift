@@ -162,7 +162,15 @@ final class CarMarkers {
                 }
                 CATransaction.commit()
             } else if dist < MapConstants.MICRO_MOVE_THRESHOLD_METERS {
-                // Stationary — keep heading stable; ignore noisy server bearing.
+                // Snap small stream deltas so the trip driver stays aligned with live GPS.
+                cancelAnimations(for: fix.id)
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                marker.position = end
+                if let heading = movementHeading(start: start, end: end) ?? fix.bearingDeg {
+                    marker.rotation = CLLocationDegrees(normalize360(heading))
+                }
+                CATransaction.commit()
             } else {
                 let duration = calculateAnimationDuration(
                     distanceMeters: dist,

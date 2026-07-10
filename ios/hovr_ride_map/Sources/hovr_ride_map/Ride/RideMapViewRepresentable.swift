@@ -64,6 +64,7 @@ struct RideMapViewRepresentable: UIViewRepresentable {
         private let tripDriverId = "trip-driver"
         private var carMarkers: CarMarkers?
         private var lastDriverCoordinate: CLLocationCoordinate2D?
+        private var pendingDriverLocation: [String: Any]?
 
         /// Used by recenter logic — backed by [CarMarkers].
         var carMarker: GMSMarker? {
@@ -71,9 +72,18 @@ struct RideMapViewRepresentable: UIViewRepresentable {
         }
 
         func bindCarMarkers(on mapView: GMSMapView) {
-            guard carMarkers == nil else { return }
-            let carImage = Self.createTripCarIcon()
-            carMarkers = CarMarkers(map: mapView, icon: carImage)
+            if carMarkers == nil {
+                let carImage = Self.createTripCarIcon()
+                carMarkers = CarMarkers(map: mapView, icon: carImage)
+            }
+            replayPendingDriverFixIfNeeded()
+        }
+
+        func replayPendingDriverFixIfNeeded() {
+            let location = pendingDriverLocation ?? parent.driverLocation.driverLocation
+            guard !location.isEmpty else { return }
+            restorePersistedDriverFix(from: location)
+            pendingDriverLocation = nil
         }
 
         /// Matches [HomeViewGoogleMapIOS.createCarMarkers] icon sizing (28×28 pt).
@@ -112,13 +122,32 @@ struct RideMapViewRepresentable: UIViewRepresentable {
             }
         }
 
+        /// Restores the driver car marker from persisted location after map attach.
+        func restorePersistedDriverFix(from location: [String: Any]) {
+            guard
+                let normalized = normalizedDriverLocationDict(from: location),
+                let lat = normalized["lat"] as? Double,
+                let lng = normalized["lng"] as? Double
+            else {
+                return
+            }
+            let coordinate = CLLocationCoordinate2D(latitude: lat, longitude: lng)
+            upsertTripDriver(coordinate: coordinate, location: normalized)
+        }
+
         private func upsertTripDriver(
             coordinate: CLLocationCoordinate2D,
             location: [String: Any],
             seedBearing: Float? = nil
         ) {
-            guard let carMarkers else { return }
-            let bearing = coordinateFromChannelValue(location["bearing"]).map { Float($0) }
+            guard let normalized = normalizedDriverLocationDict(from: location) else { return }
+            lastDriverCoordinate = coordinate
+            guard let carMarkers else {
+                pendingDriverLocation = normalized
+                return
+            }
+            pendingDriverLocation = nil
+            let bearing = coordinateFromChannelValue(normalized["bearing"]).map { Float($0) }
                 ?? seedBearing
             let fix = CarFix(
                 id: tripDriverId,
@@ -129,7 +158,6 @@ struct RideMapViewRepresentable: UIViewRepresentable {
                 timestampMs: Int64(Date().timeIntervalSince1970 * 1000)
             )
             carMarkers.upsert(fixes: [fix])
-            lastDriverCoordinate = coordinate
             trimCompletedPolylineBehindDriver()
         }
 
@@ -155,6 +183,15 @@ struct RideMapViewRepresentable: UIViewRepresentable {
                 coordinator: self,
                 fit: fit
             )
+        }
+
+        var displayedPolylineCoordinates: [CLLocationCoordinate2D] {
+            guard let path = activePolyline?.path else { return [] }
+            var coordinates: [CLLocationCoordinate2D] = []
+            for index in 0..<path.count() {
+                coordinates.append(path.coordinate(at: index))
+            }
+            return coordinates
         }
         
         init(_ parent: RideMapViewRepresentable) {
@@ -223,15 +260,22 @@ struct RideMapViewRepresentable: UIViewRepresentable {
             parent.driverLocation.$driverLocation
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] location in
+                    guard let self else { return }
+                    if location.isEmpty {
+                        self.pendingDriverLocation = nil
+                        self.lastDriverCoordinate = nil
+                        self.carMarkers?.marker(for: self.tripDriverId)?.map = nil
+                        return
+                    }
                     guard
-                        let self,
-                        let lat = location["lat"] as? CLLocationDegrees,
-                        let lng = location["lng"] as? CLLocationDegrees
+                        let normalized = normalizedDriverLocationDict(from: location),
+                        let lat = normalized["lat"] as? Double,
+                        let lng = normalized["lng"] as? Double
                     else {
                         return
                     }
                     let coordinate = CLLocationCoordinate2D(latitude: lat, longitude: lng)
-                    self.upsertTripDriver(coordinate: coordinate, location: location)
+                    self.upsertTripDriver(coordinate: coordinate, location: normalized)
                 }
                 .store(in: &cancellables)
 
@@ -243,7 +287,9 @@ struct RideMapViewRepresentable: UIViewRepresentable {
                     if replayStages.contains(stage) {
                         self.lastProcessedPolyline = ""
                     }
-                    if stage == "meetAtPickup" || stage == "driverWaitingAtPickup" {
+                    if stage == "headingToDestination" ||
+                        stage == "meetAtPickup" ||
+                        stage == "driverWaitingAtPickup" {
                         self.hasFittedCameraToRoute = false
                     }
                 }
@@ -411,6 +457,9 @@ struct RideMapViewRepresentable: UIViewRepresentable {
             redrawStopMarkers(on: mapView)
         }
 
+        private let minDenseRoutePoints: UInt = 4
+        private let sparsePolylineMaxPoints: UInt = 3
+
         func applyDriverRoute(
             encoded: String,
             on mapView: GMSMapView,
@@ -424,6 +473,19 @@ struct RideMapViewRepresentable: UIViewRepresentable {
             }
             guard let path = gmsPath(fromEncodedPolyline: encoded), path.count() > 1 else {
                 print("❌ Failed to decode polyline or path has too few points.")
+                return
+            }
+
+            if !force,
+               let existing = sourceRoutePath,
+               existing.count() >= minDenseRoutePoints,
+               path.count() <= sparsePolylineMaxPoints,
+               path.count() < existing.count() {
+                print(
+                    "Skipping sparse polyline replace (\(path.count()) pts); " +
+                        "keeping denser route (\(existing.count()) pts)"
+                )
+                trimCompletedPolylineBehindDriver()
                 return
             }
 
@@ -501,7 +563,14 @@ struct RideMapViewRepresentable: UIViewRepresentable {
                 fitCamera: false
             )
         }
-        
+
+        let savedDriver = driverLocation.driverLocation
+        if !savedDriver.isEmpty {
+            context.coordinator.restorePersistedDriverFix(from: savedDriver)
+        } else {
+            context.coordinator.replayPendingDriverFixIfNeeded()
+        }
+
         return mapView
     }
     
@@ -510,6 +579,7 @@ struct RideMapViewRepresentable: UIViewRepresentable {
         context.coordinator.mapView = uiView
         context.coordinator.bindCarMarkers(on: uiView)
         RideMapRecenterRegistry.shared.bind(coordinator: context.coordinator)
+        context.coordinator.replayPendingDriverFixIfNeeded()
     }
 
     func performRecenter(
@@ -523,6 +593,7 @@ struct RideMapViewRepresentable: UIViewRepresentable {
             fit: fit,
             context: RideMapRecenterLogic.Context(
                 polylineEncoded: encoded,
+                displayedPolylineCoordinates: coordinator.displayedPolylineCoordinates,
                 driverLocation: driverLocation.driverLocation,
                 carMarker: coordinator.carMarker,
                 dropOffMarker: coordinator.dropOffMarker,

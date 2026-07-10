@@ -149,14 +149,12 @@ class RideMapRecenterTest {
     }
 
     @Test
-    fun canFitFullPolyline_prefersFullRoutePointsOverTrimmedPolyline() {
-        val trimmed = listOf(polylineEnd)
+    fun routePointsForFullFit_prefersDisplayedPolylineOverFullRoute() {
+        val trimmed = listOf(polylineStart, polylineEnd)
         val full = listOf(polylineStart, LatLng(37.15, -122.15), polylineEnd)
-        assertFalse(
-            RideMapRecenter.canFitFullPolyline(baseState(polylinePoints = trimmed)),
-        )
-        assertTrue(
-            RideMapRecenter.canFitFullPolyline(
+        assertEquals(
+            trimmed,
+            RideMapRecenter.routePointsForFullFit(
                 baseState(polylinePoints = trimmed, fullRoutePoints = full),
             ),
         )

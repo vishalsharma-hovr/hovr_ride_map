@@ -100,13 +100,45 @@ class RideMapController {
     }
   }
 
-  Future<void> clearRoute() async {
+  Future<void> clearRoute() async => clearAllRoutes();
+
+  Future<void> clearInTripRoute() async {
+    if (Platform.isAndroid) {
+      await _safeInvoke(_rideViewChannel, 'clear-route');
+    } else if (Platform.isIOS) {
+      await _safeInvoke(_globalChannel, 'clear-route');
+    }
+  }
+
+  Future<void> clearRoutePreview() async {
+    if (Platform.isAndroid) {
+      await _safeInvoke(_routesChannel, 'clear-route');
+    }
+  }
+
+  Future<void> clearAllRoutes() async {
     if (Platform.isAndroid) {
       await _safeInvoke(_rideViewChannel, 'clear-route');
       await _safeInvoke(_routesChannel, 'clear-route');
     } else if (Platform.isIOS) {
       await _safeInvoke(_globalChannel, 'clear-route');
     }
+  }
+
+  Future<void> clearDriverLocation() async {
+    if (Platform.isAndroid) {
+      await _safeInvoke(_rideViewChannel, 'clear-driver-location');
+    } else if (Platform.isIOS) {
+      await _safeInvoke(_globalChannel, 'clear-driver-location');
+    }
+  }
+
+  Future<void> redrawRoutePreview({required String computeRoutesResponseJson}) async {
+    await _safeInvoke(
+      _routesChannel,
+      'redraw-route-preview',
+      arguments: {'computeRoutesResponseJson': computeRoutesResponseJson},
+    );
   }
 
   Future<void> setEta(Duration eta) async {

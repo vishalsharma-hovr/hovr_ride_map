@@ -55,4 +55,21 @@ final class MapGeometryHelpersTests: XCTestCase {
         XCTAssertEqual(displayPath.count(), path.count())
         XCTAssertEqual(displayPath.coordinate(at: 0).latitude, path.coordinate(at: 0).latitude, accuracy: 0.00001)
     }
+
+    func testNormalizedDriverLocationDictAcceptsNSNumberFromFlutterChannel() {
+        let raw: [String: Any] = [
+            "lat": NSNumber(value: 37.7749),
+            "lng": NSNumber(value: -122.4194),
+            "bearing": NSNumber(value: 90),
+        ]
+
+        guard let normalized = normalizedDriverLocationDict(from: raw) else {
+            XCTFail("Expected normalized driver location")
+            return
+        }
+
+        XCTAssertEqual(normalized["lat"] as? Double, 37.7749, accuracy: 0.00001)
+        XCTAssertEqual(normalized["lng"] as? Double, -122.4194, accuracy: 0.00001)
+        XCTAssertEqual(normalized["bearing"] as? Double, 90, accuracy: 0.00001)
+    }
 }

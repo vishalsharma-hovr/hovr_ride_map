@@ -22,6 +22,7 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import com.hovr.hovr_ride_map.shared.BearingSmoother
 import com.hovr.hovr_ride_map.shared.MapChromePolicy
+import com.hovr.hovr_ride_map.ChannelArgParsers
 import com.hovr.hovr_ride_map.RideViewChannelHub
 import com.google.android.gms.location.*
 import com.google.android.gms.tasks.CancellationTokenSource
@@ -89,6 +90,7 @@ internal class RideMapPlatformView(
 
     private var pendingRoute: Pair<String, String?>? = null
     private var pendingPolylineString: String? = null
+    private var pendingRouteGeneration: Int = -1
     private var savedPolylineString: String? = null
     private var lastDrawnPolyline: String? = null
 
@@ -98,6 +100,8 @@ internal class RideMapPlatformView(
     private var hasRestoredRoute = false
     private var isAppInForeground = false
     private var currentTripId: String? = null
+    private var routeDrawGeneration = 0
+    private var routeExplicitlyCleared = false
 
     private var segmentBearings: FloatArray = floatArrayOf()
     private val bearingSmoother = BearingSmoother(alpha = 0.35f)
@@ -105,6 +109,8 @@ internal class RideMapPlatformView(
     private var followTilt = 45f
     private var followZoom = 17f
     private var lastDriverLatLng: LatLng? = null
+    private data class PendingDriverFix(val lat: Double, val lng: Double, val bearing: Float?)
+    private var pendingDriverFix: PendingDriverFix? = null
     private var lastDropoffLatLng: LatLng? = null
     private var lastPickupLatLng: LatLng? = null
     private var lastUserLatLng: LatLng? = null
@@ -137,7 +143,8 @@ internal class RideMapPlatformView(
 
                 val args = arg["polyline"] as? String
                 if (args.isNullOrEmpty()) {
-                    result.error("INVALID_POLYLINE", "Polyline cannot be empty", null)
+                    onMain { clearRouteStateAndOverlays() }
+                    result.success(null)
                     return@MethodCallHandler
                 }
 
@@ -150,13 +157,14 @@ internal class RideMapPlatformView(
 
             "driver-location-update" -> {
                 val arg = call.arguments as? Map<*, *>
-                val driverLat = arg?.get("lat") as? Double
-                val driverLng = arg?.get("lng") as? Double
+                val coords = ChannelArgParsers.latLngFrom(arg)
 
-                if (driverLat != null && driverLng != null) {
+                if (coords != null) {
+                    val (driverLat, driverLng) = coords
                     onMain {
-                        val bearing = (arg["bearing"] as? Number)?.toFloat()
+                        val bearing = ChannelArgParsers.bearingFrom(arg)
                         upsertTripDriver(driverLat, driverLng, bearing)
+                        saveDriverLocationToPrefs(driverLat, driverLng, bearing)
                     }
                     result.success("Location received successfully!")
                 } else {
@@ -166,9 +174,9 @@ internal class RideMapPlatformView(
 
             "drop-off-location" -> {
                 val arg = call.arguments as? Map<*, *>
-                val lat = arg?.get("lat") as? Double
-                val lng = arg?.get("lng") as? Double
-                if (lat != null && lng != null) {
+                val coords = ChannelArgParsers.latLngFrom(arg)
+                if (coords != null) {
+                    val (lat, lng) = coords
                     lastDropoffLatLng = LatLng(lat, lng)
                     onMain { refreshDropOffMarkerFromPolyline() }
                     result.success(null)
@@ -188,9 +196,9 @@ internal class RideMapPlatformView(
 
             "pickup-location" -> {
                 val arg = call.arguments as? Map<*, *>
-                val lat = arg?.get("lat") as? Double
-                val lng = arg?.get("lng") as? Double
-                if (lat != null && lng != null) {
+                val coords = ChannelArgParsers.latLngFrom(arg)
+                if (coords != null) {
+                    val (lat, lng) = coords
                     lastPickupLatLng = LatLng(lat, lng)
                     result.success(null)
                 } else {
@@ -200,9 +208,9 @@ internal class RideMapPlatformView(
 
             "user-location" -> {
                 val arg = call.arguments as? Map<*, *>
-                val lat = arg?.get("lat") as? Double
-                val lng = arg?.get("lng") as? Double
-                if (lat != null && lng != null) {
+                val coords = ChannelArgParsers.latLngFrom(arg)
+                if (coords != null) {
+                    val (lat, lng) = coords
                     lastUserLatLng = LatLng(lat, lng)
                     result.success(null)
                 } else {
@@ -211,20 +219,12 @@ internal class RideMapPlatformView(
             }
 
             "clear-route" -> {
-                clearSavedRoute()
-                savedPolylineString = null
-                lastDrawnPolyline = null
-                pendingPolylineString = null
-                pendingRoute = null
-                shouldRestoreRoute = false
-                hasRestoredRoute = false
-                hasFittedCameraToRoute = false
-                userHasInteractedWithMap = false
-                polylinePoints = emptyList()
-                sourceRoutePath = emptyList()
-                currentPolylineIndex = 0
+                onMain { clearRouteStateAndOverlays() }
+                result.success(null)
+            }
 
-                clearRouteOverlays()
+            "clear-driver-location" -> {
+                onMain { clearTripDriverMarkerAndPrefs() }
                 result.success(null)
             }
 
@@ -254,6 +254,8 @@ internal class RideMapPlatformView(
     }
 
     fun setRoute(polyline: String, eta: String?, force: Boolean = false) {
+        val drawGeneration = routeDrawGeneration
+        routeExplicitlyCleared = false
         if (force) {
             lastDrawnPolyline = null
         }
@@ -262,27 +264,39 @@ internal class RideMapPlatformView(
             return
         }
 
-        CoroutineScope(Dispatchers.Main).launch {
-            savedPolylineString = polyline
-            pendingRoute = null
-            pendingPolylineString = null
+        onMain {
+            applySetRoute(polyline, eta, force, drawGeneration)
+        }
+    }
 
-            when {
-                googleMap == null -> {
-                    pendingRoute = polyline to eta
-                    pendingPolylineString = polyline
-                    Log.d(TAG, "Map not ready yet; queued route len=${polyline.length}")
-                }
+    private fun applySetRoute(
+        polyline: String,
+        eta: String?,
+        force: Boolean,
+        drawGeneration: Int,
+    ) {
+        savedPolylineString = polyline
 
-                !mapViewReady -> {
-                    pendingPolylineString = polyline
-                    Log.d(TAG, "MapView not yet laid out; deferring route draw")
-                }
+        when {
+            googleMap == null -> {
+                pendingRoute = polyline to eta
+                pendingPolylineString = polyline
+                pendingRouteGeneration = drawGeneration
+                Log.d(TAG, "Map not ready yet; queued route len=${polyline.length}")
+            }
 
-                else -> {
-                    Log.d(TAG, "Drawing route directly — map & layout ready")
-                    drawRoute(polyline, force)
-                }
+            !mapViewReady -> {
+                pendingPolylineString = polyline
+                pendingRouteGeneration = drawGeneration
+                Log.d(TAG, "MapView not yet laid out; deferring route draw")
+            }
+
+            else -> {
+                pendingRoute = null
+                pendingPolylineString = null
+                pendingRouteGeneration = -1
+                Log.d(TAG, "Drawing route directly — map & layout ready")
+                drawRoute(polyline, force, drawGeneration)
             }
         }
     }
@@ -323,25 +337,53 @@ internal class RideMapPlatformView(
     }
 
     private fun clearSavedRoute() {
-        sharedPrefs.edit().remove("last_polyline").apply()
-        sharedPrefs.edit().remove("current_trip_id").apply()
+        sharedPrefs.edit()
+            .remove("last_polyline")
+            .remove("current_trip_id")
+            .commit()
         currentTripId = null
         Log.d(TAG, "✅ Cleared saved route from SharedPreferences")
     }
 
+    /** Single main-thread entry for route clear — mirrors iOS PolylineController.clearPolyline(). */
+    private fun clearRouteStateAndOverlays() {
+        routeDrawGeneration++
+        routeExplicitlyCleared = true
+
+        clearSavedRoute()
+
+        savedPolylineString = null
+        lastDrawnPolyline = null
+        pendingPolylineString = null
+        pendingRoute = null
+        pendingRouteGeneration = -1
+        shouldRestoreRoute = false
+        hasRestoredRoute = false
+        hasFittedCameraToRoute = false
+        userHasInteractedWithMap = false
+        polylinePoints = emptyList()
+        sourceRoutePath = emptyList()
+        currentPolylineIndex = 0
+
+        clearRouteOverlays()
+    }
 
     init {
         mapView.onCreate(savedInstanceState)
         mapView.getMapAsync(this)
 
-        // ✅ Load saved route ONCE at the very start
-        val savedRoute = loadRouteFromPrefs()
-        if (savedRoute != null && savedRoute.isNotEmpty()) {
-            savedPolylineString = savedRoute
-            lastDrawnPolyline = savedRoute
-            Log.d(TAG, "🎯 Init: Route loaded from prefs")
+        // Load saved route only when not explicitly cleared (e.g. cold start).
+        if (!routeExplicitlyCleared) {
+            val savedRoute = loadRouteFromPrefs()
+            if (savedRoute != null && savedRoute.isNotEmpty()) {
+                savedPolylineString = savedRoute
+                lastDrawnPolyline = savedRoute
+                Log.d(TAG, "🎯 Init: Route loaded from prefs")
+            } else {
+                Log.d(TAG, "Init: No saved route")
+            }
         } else {
-            Log.d(TAG, "Init: No saved route")
+            Log.d(TAG, "Init: Skipping prefs load — route was explicitly cleared")
         }
 
         // Window focus detection
@@ -396,18 +438,26 @@ internal class RideMapPlatformView(
                 mapViewReady = true
                 Log.d(TAG, "🟢 MapView layout complete")
 
-                // ✅ Check ALL sources
-                val savedRoute = loadRouteFromPrefs()
-                val routeToDraw = pendingPolylineString ?: savedPolylineString ?: savedRoute
+                val channelRoute = pendingPolylineString
+                val prefsRoute = if (!routeExplicitlyCleared) loadRouteFromPrefs() else null
+                val routeToDraw = RideMapRouteClearState.resolveRouteToDraw(
+                    pendingChannelRoute = channelRoute,
+                    savedInMemoryRoute = savedPolylineString ?: prefsRoute,
+                    routeExplicitlyCleared = routeExplicitlyCleared,
+                )
 
                 if (routeToDraw != null && routeToDraw.isNotEmpty()) {
+                    val drawGeneration = if (channelRoute != null && pendingRouteGeneration >= 0) {
+                        pendingRouteGeneration
+                    } else {
+                        routeDrawGeneration
+                    }
                     Log.d(TAG, "📍 Drawing route after layout (len=${routeToDraw.length})")
                     pendingPolylineString = null
+                    pendingRouteGeneration = -1
                     savedPolylineString = routeToDraw
 
-                    CoroutineScope(Dispatchers.Main).launch {
-                        drawRoute(routeToDraw)
-                    }
+                    drawRoute(routeToDraw, drawGeneration = drawGeneration)
                 } else {
                     Log.d(TAG, "No route to draw after layout")
                 }
@@ -420,7 +470,10 @@ internal class RideMapPlatformView(
     private fun handleAppPause() {
         Log.d(TAG, "🔴 handleAppPause")
 
-        if (lastDrawnPolyline != null && lastDrawnPolyline!!.isNotEmpty()) {
+        if (!routeExplicitlyCleared &&
+            lastDrawnPolyline != null &&
+            lastDrawnPolyline!!.isNotEmpty()
+        ) {
             saveRouteToPrefs(lastDrawnPolyline!!)
             shouldRestoreRoute = true
             Log.d(TAG, "Marked for restoration")
@@ -432,8 +485,14 @@ internal class RideMapPlatformView(
 
         Handler(Looper.getMainLooper()).postDelayed({
             if (googleMap != null && mapViewReady) {
-                val savedRoute = loadRouteFromPrefs()
-                val route = lastDrawnPolyline ?: savedPolylineString ?: savedRoute
+                val inMemoryRoute = lastDrawnPolyline ?: savedPolylineString
+                val prefsRoute = loadRouteFromPrefs()
+                val route = RideMapRouteClearState.resolveResumeRoute(
+                    routeExplicitlyCleared = routeExplicitlyCleared,
+                    shouldRestoreRoute = shouldRestoreRoute,
+                    inMemoryRoute = inMemoryRoute,
+                    prefsRoute = prefsRoute,
+                )
 
                 if (route != null && route.isNotEmpty()) {
                     val hasRoute = activePolylines.isNotEmpty() &&
@@ -460,24 +519,28 @@ internal class RideMapPlatformView(
     }
 
     private fun clearRouteOverlays() {
-        onMain {
-            if (activePolylines.isEmpty() && lastDrawnPolyline == null) {
-                Log.d(TAG, "Skipping redundant route clear")
-                return@onMain
-            }
+        if (RideMapRouteClearState.shouldSkipRedundantOverlayClear(
+                activePolylines.size,
+                sourceRoutePath.size,
+                polylinePoints.size,
+            )
+        ) {
+            Log.d(TAG, "Skipping redundant route clear")
+            return
+        }
 
-            try {
-                activePolylines.forEach {
-                    try {
-                        it.remove()
-                    } catch (_: Exception) {
-                    }
+        try {
+            activePolylines.forEach {
+                try {
+                    it.remove()
+                } catch (_: Exception) {
                 }
-                activePolylines.clear()
-                Log.d(TAG, "✅ Route overlays cleared")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error clearing route overlays: ${e.message}")
             }
+            activePolylines.clear()
+            lastDrawnPolyline = null
+            Log.d(TAG, "✅ Route overlays cleared")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error clearing route overlays: ${e.message}")
         }
     }
 
@@ -547,8 +610,19 @@ internal class RideMapPlatformView(
         }
     }
 
-    fun drawRoute(polyline: String, force: Boolean = false) {
+    companion object {
+        private const val MIN_DENSE_ROUTE_POINTS = 4
+        private const val SPARSE_POLYLINE_MAX_POINTS = 3
+    }
+
+    fun drawRoute(
+        polyline: String,
+        force: Boolean = false,
+        drawGeneration: Int = routeDrawGeneration,
+    ) {
         Log.d(TAG, "📍 drawRoute() CALLED - len=${polyline.length}")
+
+        val generationAtStart = drawGeneration
 
         val map = googleMap
         if (map == null) {
@@ -559,6 +633,7 @@ internal class RideMapPlatformView(
         if (!mapViewReady) {
             Log.w(TAG, "MapView not ready")
             pendingPolylineString = polyline
+            pendingRouteGeneration = generationAtStart
             return
         }
 
@@ -574,7 +649,28 @@ internal class RideMapPlatformView(
             return
         }
 
+        if (!force &&
+            sourceRoutePath.size >= MIN_DENSE_ROUTE_POINTS &&
+            decodedPath.size <= SPARSE_POLYLINE_MAX_POINTS &&
+            decodedPath.size < sourceRoutePath.size
+        ) {
+            Log.d(
+                TAG,
+                "Skipping sparse polyline replace (${decodedPath.size} pts); " +
+                    "keeping denser route (${sourceRoutePath.size} pts)",
+            )
+            onMain {
+                trimCompletedPolylineBehindDriver()
+            }
+            return
+        }
+
         onMain launch@{
+            if (RideMapRouteClearState.isStaleDraw(generationAtStart, routeDrawGeneration)) {
+                Log.d(TAG, "Skipping stale drawRoute after clear")
+                return@launch
+            }
+
             if (!force &&
                 RideMapPolylineDecoder.shouldSkipPolylineRedraw(polyline, lastDrawnPolyline) &&
                 activePolylines.isNotEmpty()
@@ -591,8 +687,14 @@ internal class RideMapPlatformView(
                 return@launch
             }
 
+            if (RideMapRouteClearState.isStaleDraw(generationAtStart, routeDrawGeneration)) {
+                Log.d(TAG, "Skipping stale drawRoute after decode")
+                return@launch
+            }
+
             Log.d(TAG, "Applying driver route (${displayPath.size} pts)")
 
+            routeExplicitlyCleared = false
             lastDrawnPolyline = polyline
             savedPolylineString = polyline
             saveRouteToPrefs(polyline)
@@ -717,7 +819,14 @@ internal class RideMapPlatformView(
     private val offScreenRecenterMinIntervalMs = 1_500L
 
     private fun upsertTripDriver(lat: Double, lng: Double, bearing: Float? = null) {
-        val markers = tripCarMarkers ?: return
+        lastDriverLatLng = LatLng(lat, lng)
+        val markers = tripCarMarkers
+        if (markers == null) {
+            pendingDriverFix = PendingDriverFix(lat, lng, bearing)
+            Log.d(TAG, "Queued driver fix — map markers not ready yet")
+            return
+        }
+        pendingDriverFix = null
         markers.upsert(
             listOf(
                 CarFix(
@@ -730,7 +839,6 @@ internal class RideMapPlatformView(
                 ),
             ),
         )
-        lastDriverLatLng = LatLng(lat, lng)
         trimCompletedPolylineBehindDriver()
         maybeZoomOutWhenDriverLeavesScreen()
     }
@@ -805,6 +913,49 @@ internal class RideMapPlatformView(
         lastDriverLatLng = null
     }
 
+    private fun clearTripDriverMarkerAndPrefs() {
+        pendingDriverFix = null
+        clearTripDriverMarker()
+        clearSavedDriverLocation()
+    }
+
+    private fun saveDriverLocationToPrefs(lat: Double, lng: Double, bearing: Float?) {
+        try {
+            val editor = sharedPrefs.edit()
+                .putString("last_driver_lat", lat.toString())
+                .putString("last_driver_lng", lng.toString())
+            if (bearing != null) {
+                editor.putString("last_driver_bearing", bearing.toString())
+            } else {
+                editor.remove("last_driver_bearing")
+            }
+            editor.apply()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save driver location: ${e.message}")
+        }
+    }
+
+    private fun loadDriverLocationFromPrefs(): Triple<Double, Double, Float?>? {
+        return try {
+            val lat = sharedPrefs.getString("last_driver_lat", null)?.toDoubleOrNull()
+            val lng = sharedPrefs.getString("last_driver_lng", null)?.toDoubleOrNull()
+            if (lat == null || lng == null) return null
+            val bearing = sharedPrefs.getString("last_driver_bearing", null)?.toFloatOrNull()
+            Triple(lat, lng, bearing)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load driver location: ${e.message}")
+            null
+        }
+    }
+
+    private fun clearSavedDriverLocation() {
+        sharedPrefs.edit()
+            .remove("last_driver_lat")
+            .remove("last_driver_lng")
+            .remove("last_driver_bearing")
+            .apply()
+    }
+
     private fun followStartMarker(currentBearing: Float? = null) {
         if (userHasInteractedWithMap) return
         val map = googleMap ?: return
@@ -872,32 +1023,54 @@ internal class RideMapPlatformView(
 
         tripCarMarkers = CarMarkers(map, getCarIcon(mapView.context))
 
-        startLocationUpdates()
-
-        // ✅ ALWAYS load from prefs
-        val savedRoute = loadRouteFromPrefs()
-        if (savedRoute != null && savedRoute.isNotEmpty()) {
-            if (savedPolylineString == null || savedPolylineString!!.isEmpty()) {
-                Log.d(TAG, "💾 Loading from SharedPreferences")
-                savedPolylineString = savedRoute
-                lastDrawnPolyline = savedRoute
-            }
+        pendingDriverFix?.let { (lat, lng, bearing) ->
+            upsertTripDriver(lat, lng, bearing)
+        } ?: loadDriverLocationFromPrefs()?.let { (lat, lng, bearing) ->
+            upsertTripDriver(lat, lng, bearing)
         }
 
-        val routeToDraw = pendingRoute?.first ?: pendingPolylineString ?: savedPolylineString
+        startLocationUpdates()
+
+        if (!routeExplicitlyCleared) {
+            val savedRoute = loadRouteFromPrefs()
+            if (savedRoute != null && savedRoute.isNotEmpty()) {
+                if (savedPolylineString == null || savedPolylineString!!.isEmpty()) {
+                    Log.d(TAG, "💾 Loading from SharedPreferences")
+                    savedPolylineString = savedRoute
+                    lastDrawnPolyline = savedRoute
+                }
+            }
+        } else {
+            Log.d(TAG, "onMapReady: Skipping prefs load — route was explicitly cleared")
+        }
+
+        val channelRoute = pendingRoute?.first ?: pendingPolylineString
+        val routeToDraw = RideMapRouteClearState.resolveRouteToDraw(
+            pendingChannelRoute = channelRoute,
+            savedInMemoryRoute = savedPolylineString,
+            routeExplicitlyCleared = routeExplicitlyCleared,
+        )
 
         if (routeToDraw != null && routeToDraw.isNotEmpty()) {
             Log.d(TAG, "🗺️ Has route (len=${routeToDraw.length})")
+
+            val drawGeneration = if (channelRoute != null && pendingRouteGeneration >= 0) {
+                pendingRouteGeneration
+            } else {
+                routeDrawGeneration
+            }
 
             if (mapViewReady) {
                 Log.d(TAG, "Drawing now")
                 pendingRoute = null
                 pendingPolylineString = null
+                pendingRouteGeneration = -1
                 hasRestoredRoute = true
-                drawRoute(routeToDraw)
+                drawRoute(routeToDraw, drawGeneration = drawGeneration)
             } else {
                 Log.d(TAG, "Waiting for layout")
                 pendingPolylineString = routeToDraw
+                pendingRouteGeneration = drawGeneration
             }
         } else {
             Log.d(TAG, "No route")
@@ -919,9 +1092,16 @@ internal class RideMapPlatformView(
             ) {
                 if (stage == "headingToDestination") {
                     clearPickupAndUserMarkers()
+                    polylinePoints = emptyList()
+                    sourceRoutePath = emptyList()
+                    currentPolylineIndex = 0
+                    clearRouteOverlays()
                 }
                 lastDrawnPolyline = null
-                if (stage == "meetAtPickup" || stage == "driverWaitingAtPickup") {
+                if (stage == "headingToDestination" ||
+                    stage == "meetAtPickup" ||
+                    stage == "driverWaitingAtPickup"
+                ) {
                     hasFittedCameraToRoute = false
                 }
             }

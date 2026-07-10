@@ -104,8 +104,11 @@ internal object RideMapRecenter {
 
   fun canFitFullPolyline(state: State): Boolean = routePointsForFullFit(state).size >= 2
 
-  private fun routePointsForFullFit(state: State): List<LatLng> {
-    return state.fullRoutePoints.takeIf { it.size >= 2 } ?: state.polylinePoints
+  /** Prefer the polyline currently drawn on the map (stream leg) over stored full route. */
+  fun routePointsForFullFit(state: State): List<LatLng> {
+    return state.polylinePoints.takeIf { it.size >= 2 }
+        ?: state.fullRoutePoints.takeIf { it.size >= 2 }
+        ?: emptyList()
   }
 
   fun fitFullPolyline(
@@ -118,6 +121,7 @@ internal object RideMapRecenter {
     if (path.size < 2) return false
     val bounds = LatLngBounds.builder().apply {
       path.forEach { include(it) }
+      resolveDriver(state)?.let { include(it) }
     }.build()
     val padding = getDynamicPadding(
         calculateDistanceInMeters(path.first(), path.last())

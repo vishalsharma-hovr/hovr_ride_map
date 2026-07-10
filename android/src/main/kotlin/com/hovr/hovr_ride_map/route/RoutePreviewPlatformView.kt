@@ -34,6 +34,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.hovr.hovr_ride_map.R
 import com.hovr.hovr_ride_map.RideViewChannelHub
+import com.hovr.hovr_ride_map.ride.RideMapRouteClearState
 import com.hovr.hovr_ride_map.shared.MapChromePolicy
 import com.hovr.hovr_ride_map.utils.MapViewUtils
 import com.hovr.hovr_ride_map.utils.MapViewUtils.createBitmapFromView
@@ -71,6 +72,13 @@ internal class RoutePreviewPlatformView(
     private var startMarker: Marker? = null
     private var pendingDriverEtaSeconds: Int? = null
     private var rideViewHandlerRegistered = false
+    private var routeDrawGeneration = 0
+    private var routeExplicitlyCleared = false
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    private fun onMain(block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) block() else mainHandler.post(block)
+    }
 
     private val rideViewHandler = MethodChannel.MethodCallHandler { call, result ->
         when (call.method) {
@@ -192,12 +200,38 @@ internal class RoutePreviewPlatformView(
                     result.success(null)
                 }
                 "clear-route" -> {
-                    clearRouteOverlays()
+                    onMain { clearRouteStateAndOverlays() }
+                    result.success(null)
+                }
+                "redraw-route-preview" -> {
+                    val args = call.arguments as? Map<*, *>
+                    val json = args?.get("computeRoutesResponseJson")?.toString()
+                    if (json.isNullOrBlank()) {
+                        result.error("INVALID_ARGS", "Missing computeRoutesResponseJson", null)
+                        return@setMethodCallHandler
+                    }
+                    onMain {
+                        computeRoutesResponse = Gson().fromJson(json, ComputeRoutesResponse::class.java)
+                        routeExplicitlyCleared = false
+                        if (::mMap.isInitialized) {
+                            drawRoute(
+                                computeRoutesResponse = computeRoutesResponse,
+                                origin = origin,
+                                destination = destination,
+                            )
+                        }
+                    }
                     result.success(null)
                 }
                 else -> result.notImplemented()
             }
         }
+    }
+
+    private fun clearRouteStateAndOverlays() {
+        routeDrawGeneration++
+        routeExplicitlyCleared = true
+        clearRouteOverlays()
     }
 
     private fun clearRouteOverlays() {
@@ -231,9 +265,14 @@ internal class RoutePreviewPlatformView(
         mMap = map
         MapChromePolicy.apply(mMap)
         registerTaggedMarkerClickListener()
-        drawRoute(
-            origin = origin, destination = destination, computeRoutesResponse = computeRoutesResponse
-        )
+        // Initial draw from booking args; suppressed only after clear-route on this instance.
+        if (!routeExplicitlyCleared) {
+            drawRoute(
+                origin = origin,
+                destination = destination,
+                computeRoutesResponse = computeRoutesResponse,
+            )
+        }
     }
 
     private fun registerTaggedMarkerClickListener() {
@@ -340,8 +379,15 @@ internal class RoutePreviewPlatformView(
         origin: LatLng,
         destination: LatLng,
     ) {
+        routeExplicitlyCleared = false
+        val generationAtStart = routeDrawGeneration
         CoroutineScope(Dispatchers.IO).launch {
             try {
+                if (RideMapRouteClearState.isStaleDraw(generationAtStart, routeDrawGeneration)) {
+                    Log.d("drawRoute", "Skipping stale route preview draw after clear")
+                    return@launch
+                }
+
                 val route = computeRoutesResponse
                 val encodedPolyline = route.polyline
 
@@ -369,6 +415,11 @@ internal class RoutePreviewPlatformView(
                 }
 
                 withContext(Dispatchers.Main) {
+                    if (RideMapRouteClearState.isStaleDraw(generationAtStart, routeDrawGeneration)) {
+                        Log.d("drawRoute", "Skipping stale route preview draw on main")
+                        return@withContext
+                    }
+
                     clearRouteOverlays()
 
                     mMap.addPolyline(

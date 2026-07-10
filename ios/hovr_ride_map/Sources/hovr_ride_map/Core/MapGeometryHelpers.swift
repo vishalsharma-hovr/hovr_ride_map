@@ -152,6 +152,24 @@ func coordinateFromChannelValue(_ value: Any?) -> CLLocationDegrees? {
     return nil
 }
 
+/// Normalizes Flutter channel driver-location payloads (lat/lng may be NSNumber).
+func normalizedDriverLocationDict(from raw: [String: Any]) -> [String: Any]? {
+    guard
+        let lat = coordinateFromChannelValue(raw["lat"]),
+        let lng = coordinateFromChannelValue(raw["lng"])
+    else {
+        return nil
+    }
+    var normalized: [String: Any] = [
+        "lat": lat,
+        "lng": lng,
+    ]
+    if let bearing = coordinateFromChannelValue(raw["bearing"]) {
+        normalized["bearing"] = bearing
+    }
+    return normalized
+}
+
 /// Great-circle distance between two coordinates in meters.
 func distanceMeters(
     from origin: CLLocationCoordinate2D,

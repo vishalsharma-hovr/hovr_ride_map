@@ -6,6 +6,8 @@ import GoogleMaps
 enum RideMapRecenterLogic {
     struct Context {
         let polylineEncoded: String?
+        /// Points of the polyline currently drawn on the map (trimmed stream leg).
+        let displayedPolylineCoordinates: [CLLocationCoordinate2D]
         let driverLocation: [String: Any]
         let carMarker: GMSMarker?
         let dropOffMarker: GMSMarker?
@@ -20,7 +22,7 @@ enum RideMapRecenterLogic {
         NSLog("🎯 [hovr_ride_map] performRecenter fit=\(fit ?? "default")")
 
         if fit == "fullPolyline" {
-            if fitFullPolyline(on: mapView, encoded: context.polylineEncoded) { return true }
+            if fitFullPolyline(on: mapView, context: context) { return true }
         }
 
         if fit == "driverToDestination" {
@@ -39,7 +41,7 @@ enum RideMapRecenterLogic {
             let driver = resolveDriverCoordinate(context: context),
             let destination = resolveDestinationCoordinate(context: context)
         else {
-            return fitFullPolyline(on: mapView, encoded: context.polylineEncoded)
+            return false
         }
 
         let bounds = GMSCoordinateBounds(coordinate: driver, coordinate: destination)
@@ -71,21 +73,46 @@ enum RideMapRecenterLogic {
             return true
         }
 
-        return fitFullPolyline(on: mapView, encoded: context.polylineEncoded)
+        return false
     }
 
-    private static func fitFullPolyline(on mapView: GMSMapView, encoded: String?) -> Bool {
+    private static func fitFullPolyline(on mapView: GMSMapView, context: Context) -> Bool {
+        let routeCoordinates = routeCoordinatesForFit(context: context)
+        guard routeCoordinates.count >= 2 else { return false }
+
+        var bounds = GMSCoordinateBounds(
+            coordinate: routeCoordinates[0],
+            coordinate: routeCoordinates[0]
+        )
+        for coordinate in routeCoordinates {
+            bounds = bounds.includingCoordinate(coordinate)
+        }
+        if let driver = resolveDriverCoordinate(context: context) {
+            bounds = bounds.includingCoordinate(driver)
+        }
+        mapView.animate(with: GMSCameraUpdate.fit(bounds, withPadding: 100))
+        NSLog("🎯 Recentered visible stream route bounds")
+        return true
+    }
+
+    /// Prefer the drawn map polyline (stream leg) over the last encoded payload.
+    private static func routeCoordinatesForFit(context: Context) -> [CLLocationCoordinate2D] {
+        let displayed = context.displayedPolylineCoordinates
+        if displayed.count >= 2 {
+            return displayed
+        }
         guard
-            let encoded,
+            let encoded = context.polylineEncoded,
             let path = gmsPath(fromEncodedPolyline: encoded),
             path.count() > 1
         else {
-            return false
+            return []
         }
-        let bounds = GMSCoordinateBounds(path: path)
-        mapView.animate(with: GMSCameraUpdate.fit(bounds, withPadding: 100))
-        NSLog("🎯 Recentered full route bounds")
-        return true
+        var coordinates: [CLLocationCoordinate2D] = []
+        for index in 0..<path.count() {
+            coordinates.append(path.coordinate(at: index))
+        }
+        return coordinates
     }
 
     private static func fitDefault(on mapView: GMSMapView, context: Context) -> Bool {
