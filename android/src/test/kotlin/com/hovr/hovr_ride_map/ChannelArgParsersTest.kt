@@ -22,4 +22,19 @@ class ChannelArgParsersTest {
     fun latLngFrom_rejectsMissingKeys() {
         assertNull(ChannelArgParsers.latLngFrom(mapOf("lat" to 43.0)))
     }
+
+    @Test
+    fun boolFrom_acceptsBooleanTrue() {
+        assertEquals(true, ChannelArgParsers.boolFrom(mapOf("force" to true), "force"))
+    }
+
+    @Test
+    fun boolFrom_acceptsNumericOne() {
+        assertEquals(true, ChannelArgParsers.boolFrom(mapOf("force" to 1), "force"))
+    }
+
+    @Test
+    fun boolFrom_defaultsWhenMissing() {
+        assertEquals(false, ChannelArgParsers.boolFrom(emptyMap<String, Any>(), "force"))
+    }
 }

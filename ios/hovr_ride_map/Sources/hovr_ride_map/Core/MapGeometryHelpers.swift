@@ -196,23 +196,33 @@ func closestIndex(on path: GMSPath, to coordinate: CLLocationCoordinate2D) -> UI
     return bestIndex
 }
 
-/// Builds a route path that starts at the driver and omits vertices behind them.
+/// Builds a route path that starts at the on-path projection of the driver.
+/// Never invents long GPS→vertex chords (those draw as straight lines).
 func trimmedPath(
     from path: GMSPath,
     startAt driver: CLLocationCoordinate2D,
-    duplicateThresholdMeters: CLLocationDistance = 10
+    duplicateThresholdMeters: CLLocationDistance = 10,
+    maxSnapDistanceMeters: CLLocationDistance = 120
 ) -> GMSMutablePath? {
     guard path.count() > 1 else { return nil }
     guard CLLocationCoordinate2DIsValid(driver) else { return nil }
 
-    let startIndex = closestIndex(on: path, to: driver)
-    let mutable = GMSMutablePath()
-    mutable.add(driver)
+    guard let snap = closestPointOnPath(on: path, to: driver) else { return nil }
+    if snap.distance > maxSnapDistanceMeters {
+        let mutable = GMSMutablePath()
+        for index in 0..<path.count() {
+            mutable.add(path.coordinate(at: index))
+        }
+        return mutable
+    }
 
-    for index in startIndex..<path.count() {
+    let mutable = GMSMutablePath()
+    mutable.add(snap.projected)
+    let continueFrom = min(snap.edgeStart + 1, path.count() - 1)
+    for index in continueFrom..<path.count() {
         let coordinate = path.coordinate(at: index)
         if mutable.count() == 1,
-           distanceMeters(from: driver, to: coordinate) < duplicateThresholdMeters {
+           distanceMeters(from: snap.projected, to: coordinate) < duplicateThresholdMeters {
             continue
         }
         mutable.add(coordinate)
@@ -222,12 +232,51 @@ func trimmedPath(
     return mutable
 }
 
+/// Projects `point` onto segment a→b.
+func projectOntoSegment(
+    point: CLLocationCoordinate2D,
+    a: CLLocationCoordinate2D,
+    b: CLLocationCoordinate2D
+) -> CLLocationCoordinate2D {
+    let segmentLength = distanceMeters(from: a, to: b)
+    if segmentLength < 1 { return a }
+    let headingAb = GMSGeometryHeading(a, b)
+    let headingAp = GMSGeometryHeading(a, point)
+    let distanceAp = distanceMeters(from: a, to: point)
+    let angleRad = (headingAp - headingAb) * .pi / 180
+    let along = distanceAp * cos(angleRad)
+    let fraction = max(0, min(1, along / segmentLength))
+    return GMSGeometryInterpolate(a, b, fraction)
+}
+
+func closestPointOnPath(
+    on path: GMSPath,
+    to driver: CLLocationCoordinate2D
+) -> (edgeStart: UInt, projected: CLLocationCoordinate2D, distance: CLLocationDistance)? {
+    guard path.count() > 1 else { return nil }
+    var bestEdge: UInt = 0
+    var bestPoint = path.coordinate(at: 0)
+    var bestDistance = CLLocationDistance.greatestFiniteMagnitude
+    for index in 0..<(path.count() - 1) {
+        let a = path.coordinate(at: index)
+        let b = path.coordinate(at: index + 1)
+        let projected = projectOntoSegment(point: driver, a: a, b: b)
+        let distance = distanceMeters(from: driver, to: projected)
+        if distance < bestDistance {
+            bestDistance = distance
+            bestEdge = index
+            bestPoint = projected
+        }
+    }
+    return (bestEdge, bestPoint, bestDistance)
+}
+
 /// Returns a stable display path: uses the stream leg as-is when the driver is already
-/// near the polyline start; otherwise trims once so the line begins at the driver.
+/// near the polyline start; otherwise edge-trims without inventing long chords.
 func routePathForDisplay(
     from path: GMSPath,
     driver: CLLocationCoordinate2D,
-    nearStartThresholdMeters: CLLocationDistance = 25
+    nearStartThresholdMeters: CLLocationDistance = 80
 ) -> GMSMutablePath? {
     guard path.count() > 1 else { return nil }
     guard CLLocationCoordinate2DIsValid(driver) else { return nil }

@@ -57,4 +57,14 @@ internal object RideMapRouteClearState {
 
     fun isStaleDraw(generationAtStart: Int, currentGeneration: Int): Boolean =
         generationAtStart != currentGeneration
+
+    /**
+     * Forced stream redraws must paint even if a concurrent clear bumped generation.
+     * Release builds hit this race more often than profile (faster scheduling).
+     */
+    fun shouldSkipStaleDraw(
+        force: Boolean,
+        generationAtStart: Int,
+        currentGeneration: Int,
+    ): Boolean = !force && isStaleDraw(generationAtStart, currentGeneration)
 }

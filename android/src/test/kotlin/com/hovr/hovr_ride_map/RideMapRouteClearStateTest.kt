@@ -163,4 +163,26 @@ class RideMapRouteClearStateTest {
     fun isStaleDraw_falseWhenGenerationUnchanged() {
         assertFalse(RideMapRouteClearState.isStaleDraw(generationAtStart = 3, currentGeneration = 3))
     }
+
+    @Test
+    fun shouldSkipStaleDraw_falseWhenForceEvenIfGenerationAdvanced() {
+        assertFalse(
+            RideMapRouteClearState.shouldSkipStaleDraw(
+                force = true,
+                generationAtStart = 1,
+                currentGeneration = 2,
+            ),
+        )
+    }
+
+    @Test
+    fun shouldSkipStaleDraw_trueWhenNotForcedAndGenerationAdvanced() {
+        assertTrue(
+            RideMapRouteClearState.shouldSkipStaleDraw(
+                force = false,
+                generationAtStart = 1,
+                currentGeneration = 2,
+            ),
+        )
+    }
 }

@@ -422,9 +422,13 @@ internal class RoutePreviewPlatformView(
 
                     clearRouteOverlays()
 
-                    mMap.addPolyline(
-                        PolylineOptions().addAll(decodedPath).color(Color.rgb(74, 171, 36)).width(10f)
-                    ).also { activePolylines.add(it) }
+                    // Uber-like casing + HOVR green stroke (same as in-trip ride map).
+                    activePolylines.addAll(
+                        com.hovr.hovr_ride_map.ride.RideMapRouteStyle.addCasingAndStroke(
+                            mMap,
+                            decodedPath,
+                        ),
+                    )
 
                     pendingDriverEtaSeconds?.let { etaTextView.text = etaMinutesLabel(it) }
                     val startBitmap = BitmapDescriptorFactory.fromBitmap(

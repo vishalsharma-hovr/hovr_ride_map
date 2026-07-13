@@ -8,17 +8,18 @@ import io.flutter.plugin.common.MethodChannel
 /**
  * Single permanent handler for [ride-view-channel].
  *
- * Platform map views push/pop their own delegates so disposing one view never
- * leaves the channel without a handler.
+ * Mirrors iOS `PolylineController` / global bridge targeting: in-trip route and
+ * driver updates always go to [RideMapPlatformView], never to HomeMap/RoutePreview
+ * handlers that may sit on top of the generic stack and return `notImplemented`.
  *
- * When no in-trip map view has registered yet (common during release AOT
- * transitions from HomeMapView → RideMapView), [driver-location-update] and
- * [polylines-channel] payloads are buffered and replayed on the next [push].
+ * When no ride map is registered yet, [driver-location-update] and
+ * [polylines-channel] are buffered and replayed on the next [pushRideMap].
  */
 object RideViewChannelHub {
     private const val TAG = "RideViewChannelHub"
 
     private val handlers = ArrayDeque<MethodChannel.MethodCallHandler>()
+    private var rideMapHandler: MethodChannel.MethodCallHandler? = null
     private val lock = Any()
     private var installed = false
 
@@ -35,6 +36,21 @@ object RideViewChannelHub {
         "trip-stops",
         "clear-pickup-user-markers",
         "clear-driver-location",
+    )
+
+    /** Methods that must reach the in-trip ride map (iOS global polyline/driver path). */
+    private val rideMapOwnedMethods = setOf(
+        "polylines-channel",
+        "driver-location-update",
+        "clear-route",
+        "clear-driver-location",
+        "trip-stage",
+        "pickup-location",
+        "user-location",
+        "drop-off-location",
+        "trip-stops",
+        "clear-pickup-user-markers",
+        "eta-channel",
     )
 
     private val bufferableMethods = setOf(
@@ -70,10 +86,10 @@ object RideViewChannelHub {
         }
     }
 
+    /** Generic stack (home / route-preview) for recenter and similar. */
     fun push(handler: MethodChannel.MethodCallHandler) {
         synchronized(lock) {
             handlers.addLast(handler)
-            replayPendingTo(handler)
         }
     }
 
@@ -81,10 +97,26 @@ object RideViewChannelHub {
         synchronized(lock) { handlers.remove(handler) }
     }
 
+    /** In-trip [RideMapPlatformView] — owns polylines and driver location. */
+    fun pushRideMap(handler: MethodChannel.MethodCallHandler) {
+        synchronized(lock) {
+            rideMapHandler = handler
+            replayPendingTo(handler)
+        }
+    }
+
+    fun popRideMap(handler: MethodChannel.MethodCallHandler) {
+        synchronized(lock) {
+            if (rideMapHandler === handler) {
+                rideMapHandler = null
+            }
+        }
+    }
+
     private fun dispatchLocked(call: MethodCall, result: MethodChannel.Result) {
         applyClearPending(call.method)
 
-        val handler = handlers.lastOrNull()
+        val handler = resolveHandler(call.method)
         if (handler != null) {
             handler.onMethodCall(call, result)
             if (call.method in bufferableMethods) {
@@ -103,6 +135,27 @@ object RideViewChannelHub {
         }
 
         result.notImplemented()
+    }
+
+    private fun resolveHandler(method: String): MethodChannel.MethodCallHandler? {
+        if (method in rideMapOwnedMethods) {
+            return rideMapHandler ?: handlers.lastOrNull()
+        }
+        return handlers.lastOrNull() ?: rideMapHandler
+    }
+
+    /** Visible for unit tests. */
+    internal fun targetHandlerForTest(method: String): MethodChannel.MethodCallHandler? =
+        synchronized(lock) { resolveHandler(method) }
+
+    /** Visible for unit tests — clears stack state between tests. */
+    internal fun resetForTest() {
+        synchronized(lock) {
+            handlers.clear()
+            rideMapHandler = null
+            pendingDriverLocation = null
+            pendingPolyline = null
+        }
     }
 
     internal fun capturePending(call: MethodCall) {
@@ -125,7 +178,7 @@ object RideViewChannelHub {
                 } else {
                     PendingPolyline(
                         polyline = polyline,
-                        force = arg["force"] as? Boolean ?: false,
+                        force = ChannelArgParsers.boolFrom(arg, "force"),
                     )
                 }
             }

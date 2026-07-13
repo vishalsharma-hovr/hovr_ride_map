@@ -1,9 +1,9 @@
 package com.hovr.hovr_ride_map
 
 /**
- * Parses lat/lng from Flutter method-channel maps.
+ * Parses values from Flutter method-channel maps.
  *
- * Values may arrive as [Double], [Float], or [Int] depending on the Dart encoder
+ * Numbers may arrive as [Double], [Float], or [Int] depending on the Dart encoder
  * and build mode — never cast directly to [Double].
  */
 internal object ChannelArgParsers {
@@ -16,4 +16,14 @@ internal object ChannelArgParsers {
 
     fun bearingFrom(args: Map<*, *>?): Float? =
         (args?.get("bearing") as? Number)?.toFloat()
+
+    /** Accepts [Boolean] or numeric 0/1 from the method channel. */
+    fun boolFrom(args: Map<*, *>?, key: String, default: Boolean = false): Boolean {
+        if (args == null) return default
+        return when (val value = args[key]) {
+            is Boolean -> value
+            is Number -> value.toInt() != 0
+            else -> default
+        }
+    }
 }

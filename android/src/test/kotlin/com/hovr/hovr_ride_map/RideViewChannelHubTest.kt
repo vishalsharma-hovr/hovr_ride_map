@@ -1,9 +1,11 @@
 package com.hovr.hovr_ride_map
 
 import io.flutter.plugin.common.MethodCall
+import io.flutter.plugin.common.MethodChannel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Before
 import org.junit.Test
 
@@ -11,7 +13,7 @@ class RideViewChannelHubTest {
 
     @Before
     fun resetHub() {
-        RideViewChannelHub.applyClearPending("clear-route")
+        RideViewChannelHub.resetForTest()
     }
 
     @Test
@@ -59,4 +61,21 @@ class RideViewChannelHubTest {
         assertNull(RideViewChannelHub.pendingPolyline)
         assertNull(RideViewChannelHub.pendingDriverLocation)
     }
+
+    @Test
+    fun polylinesPreferRideMap_evenWhenHomeMapIsOnTop() {
+        val home = stubHandler()
+        val ride = stubHandler()
+
+        RideViewChannelHub.push(home)
+        RideViewChannelHub.pushRideMap(ride)
+
+        assertSame(ride, RideViewChannelHub.targetHandlerForTest("polylines-channel"))
+        assertSame(ride, RideViewChannelHub.targetHandlerForTest("driver-location-update"))
+        // Recenter still uses the top generic handler (home / preview).
+        assertSame(home, RideViewChannelHub.targetHandlerForTest("recenter-map"))
+    }
+
+    private fun stubHandler(): MethodChannel.MethodCallHandler =
+        MethodChannel.MethodCallHandler { _, result -> result.success(null) }
 }
