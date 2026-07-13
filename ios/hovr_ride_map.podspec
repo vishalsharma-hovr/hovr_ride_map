@@ -1,7 +1,7 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'hovr_ride_map'
-  s.version          = '1.0.3'
+  s.version          = '1.0.4'
   s.summary          = 'Native Google Maps platform views for Flutter ride apps.'
   s.description      = <<-DESC
 Native Google Maps platform views and ride map method channels for Flutter apps.

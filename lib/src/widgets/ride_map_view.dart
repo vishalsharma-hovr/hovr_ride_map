@@ -10,11 +10,7 @@ import 'package:hovr_ride_map/src/widgets/platform_map_view.dart';
 /// native map via the method channel only when [mode] actually changes. The
 /// platform view stays mounted; it is not recreated on parent rebuilds.
 class RideMapView extends StatefulWidget {
-  const RideMapView({
-    super.key,
-    required this.mode,
-    this.viewKey,
-  });
+  const RideMapView({super.key, required this.mode, this.viewKey});
 
   final RideMapMode mode;
 
@@ -22,7 +18,9 @@ class RideMapView extends StatefulWidget {
   /// so the native map is not torn down when the host rebuilds.
   final Key? viewKey;
 
-  static const _defaultPlatformViewKey = ValueKey<String>('hovr-ride-map-platform-view');
+  static const _defaultPlatformViewKey = ValueKey<String>(
+    'hovr-ride-map-platform-view',
+  );
 
   @override
   State<RideMapView> createState() => _RideMapViewState();

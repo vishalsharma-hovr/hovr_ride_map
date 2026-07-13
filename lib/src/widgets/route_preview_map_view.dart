@@ -6,11 +6,7 @@ import 'package:hovr_ride_map/src/widgets/platform_map_view.dart';
 
 /// Pickup → dropoff route preview during choose-a-ride.
 class RoutePreviewMapView extends StatelessWidget {
-  const RoutePreviewMapView({
-    super.key,
-    required this.config,
-    this.viewKey,
-  });
+  const RoutePreviewMapView({super.key, required this.config, this.viewKey});
 
   final RoutePreviewConfig config;
   final Key? viewKey;

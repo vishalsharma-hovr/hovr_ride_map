@@ -41,12 +41,14 @@ class _HovrRideMapExampleAppState extends State<HovrRideMapExampleApp> {
                   ChoiceChip(
                     label: const Text('Home map'),
                     selected: _showHomeMap,
-                    onSelected: (selected) => setState(() => _showHomeMap = selected),
+                    onSelected: (selected) =>
+                        setState(() => _showHomeMap = selected),
                   ),
                   ChoiceChip(
                     label: const Text('Ride map'),
                     selected: !_showHomeMap,
-                    onSelected: (selected) => setState(() => _showHomeMap = !selected),
+                    onSelected: (selected) =>
+                        setState(() => _showHomeMap = !selected),
                   ),
                   if (!_showHomeMap)
                     DropdownButton<RideMapMode>(
@@ -55,14 +57,21 @@ class _HovrRideMapExampleAppState extends State<HovrRideMapExampleApp> {
                         if (mode != null) setState(() => _mode = mode);
                       },
                       items: RideMapMode.values
-                          .map((mode) => DropdownMenuItem(value: mode, child: Text(mode.wireValue)))
+                          .map(
+                            (mode) => DropdownMenuItem(
+                              value: mode,
+                              child: Text(mode.wireValue),
+                            ),
+                          )
                           .toList(),
                     ),
                 ],
               ),
             ),
             Expanded(
-              child: _showHomeMap ? const HomeMapView() : RideMapView(mode: _mode),
+              child: _showHomeMap
+                  ? const HomeMapView()
+                  : RideMapView(mode: _mode),
             ),
           ],
         ),

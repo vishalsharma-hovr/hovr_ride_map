@@ -67,29 +67,51 @@ class RideMapController {
     await _safeInvoke(_routesChannel, 'recenter-map');
   }
 
-  Future<void> updateDriverLocation(HovrLatLng position, {double? bearing}) async {
+  Future<void> updateDriverLocation(
+    HovrLatLng position, {
+    double? bearing,
+  }) async {
     final payload = <String, Object>{
       'lat': position.latitude,
       'lng': position.longitude,
       'bearing': ?bearing,
     };
     if (Platform.isIOS) {
-      await _safeInvoke(_globalChannel, 'driver-location-channel', arguments: payload);
+      await _safeInvoke(
+        _globalChannel,
+        'driver-location-channel',
+        arguments: payload,
+      );
       return;
     }
-    await _safeInvoke(_rideViewChannel, 'driver-location-update', arguments: payload);
+    await _safeInvoke(
+      _rideViewChannel,
+      'driver-location-update',
+      arguments: payload,
+    );
   }
 
-  Future<void> setRoutePolyline(String encodedPolyline, {bool force = false}) async {
+  Future<void> setRoutePolyline(
+    String encodedPolyline, {
+    bool force = false,
+  }) async {
     final payload = <String, Object>{
       'polyline': encodedPolyline,
       if (force) 'force': true,
     };
     if (Platform.isIOS) {
-      await _safeInvoke(_globalChannel, 'polylines-channel', arguments: payload);
+      await _safeInvoke(
+        _globalChannel,
+        'polylines-channel',
+        arguments: payload,
+      );
       return;
     }
-    await _safeInvoke(_rideViewChannel, 'polylines-channel', arguments: payload);
+    await _safeInvoke(
+      _rideViewChannel,
+      'polylines-channel',
+      arguments: payload,
+    );
   }
 
   /// Removes pickup and rider pins from the in-trip map (heading stage).
@@ -133,7 +155,9 @@ class RideMapController {
     }
   }
 
-  Future<void> redrawRoutePreview({required String computeRoutesResponseJson}) async {
+  Future<void> redrawRoutePreview({
+    required String computeRoutesResponseJson,
+  }) async {
     await _safeInvoke(
       _routesChannel,
       'redraw-route-preview',
@@ -197,13 +221,13 @@ class RideMapController {
     await _safeInvoke(
       _showDriversChannel,
       'show-drivers',
-      arguments: {
-        'nearbyDrivers': drivers.map((d) => d.toJson()).toList(),
-      },
+      arguments: {'nearbyDrivers': drivers.map((d) => d.toJson()).toList()},
     );
   }
 
-  Future<void> showNearbyDriversFromPayload(Map<String, dynamic> payload) async {
+  Future<void> showNearbyDriversFromPayload(
+    Map<String, dynamic> payload,
+  ) async {
     await _safeInvoke(_showDriversChannel, 'show-drivers', arguments: payload);
   }
 

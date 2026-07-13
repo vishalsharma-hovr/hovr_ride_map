@@ -1,3 +1,9 @@
+## 1.0.4
+
+- Route in-trip polylines and driver updates to RideMap instead of home/preview handlers
+- Add HOVR brand green route stroke with Uber-style casing on Android and iOS
+- Improve in-trip stream route restore, recenter, and channel reliability
+
 ## 1.0.3
 
 - In-trip recenter: `fullPolyline` fit zooms out to show the entire route path.
