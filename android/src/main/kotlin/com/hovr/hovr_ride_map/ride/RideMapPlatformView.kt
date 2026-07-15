@@ -743,15 +743,15 @@ internal class RideMapPlatformView(
     private fun resolvedDriverLatLng(fallback: LatLng): LatLng = lastDriverLatLng ?: fallback
 
     private fun updateActivePolyline(points: List<LatLng>, map: GoogleMap) {
-        // Uber-like casing + stroke: update in place when both layers exist.
-        if (activePolylines.size >= 2) {
+        // Fixed screen-pixel width (not zoom-dependent); update path in place when present.
+        if (activePolylines.isNotEmpty()) {
             activePolylines.forEach { it.points = points }
             return
         }
 
         activePolylines.forEach { it.remove() }
         activePolylines.clear()
-        activePolylines += RideMapRouteStyle.addCasingAndStroke(map, points)
+        activePolylines += RideMapRouteStyle.addRoutePolyline(map, points, mapView.context)
     }
 
     private fun placeRouteMarkersIfNeeded(path: List<LatLng>, map: GoogleMap) {

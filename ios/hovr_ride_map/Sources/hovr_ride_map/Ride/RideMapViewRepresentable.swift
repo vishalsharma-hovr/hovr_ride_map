@@ -52,8 +52,6 @@ struct RideMapViewRepresentable: UIViewRepresentable {
         var mapView: GMSMapView?
         var cancellables = Set<AnyCancellable>()
         var activePolyline: GMSPolyline?
-        /// Soft brand-tinted halo under [activePolyline] (Uber-style casing).
-        var routeCasingPolyline: GMSPolyline?
         var traveledPolyline: GMSPolyline?
         var lastProcessedPolyline: String = ""
         var sourceRoutePath: GMSPath?
@@ -311,7 +309,6 @@ struct RideMapViewRepresentable: UIViewRepresentable {
             cancellables.forEach { $0.cancel() }
             cancellables.removeAll()
             activePolyline?.map = nil
-            routeCasingPolyline?.map = nil
             traveledPolyline?.map = nil
             carMarker?.map = nil
             dropOffMarker?.map = nil
@@ -416,8 +413,6 @@ struct RideMapViewRepresentable: UIViewRepresentable {
 
             activePolyline?.map = nil
             activePolyline = nil
-            routeCasingPolyline?.map = nil
-            routeCasingPolyline = nil
             traveledPolyline?.map = nil
             traveledPolyline = nil
             lastProcessedPolyline = ""
@@ -436,31 +431,19 @@ struct RideMapViewRepresentable: UIViewRepresentable {
         }
 
         func updateActivePolyline(path: GMSMutablePath, on mapView: GMSMapView) {
-            // Uber-like casing + HOVR green core; update both in place.
-            if let existing = activePolyline, let casing = routeCasingPolyline {
+            // Fixed screen-point width (not zoom-dependent); update path in place when present.
+            if let existing = activePolyline {
                 existing.path = path
-                casing.path = path
                 return
             }
 
-            routeCasingPolyline?.map = nil
             activePolyline?.map = nil
 
-            let brand = UIColor(red: 74 / 255, green: 171 / 255, blue: 36 / 255, alpha: 1)
-
-            let casing = GMSPolyline(path: path)
-            casing.strokeWidth = 14
-            casing.strokeColor = brand.withAlphaComponent(0.35)
-            casing.geodesic = true
-            casing.zIndex = 99
-            casing.map = mapView
-            routeCasingPolyline = casing
-
             let line = GMSPolyline(path: path)
-            line.strokeWidth = 7
-            line.strokeColor = brand
+            line.strokeWidth = RideMapRouteStyle.strokeWidth
+            line.strokeColor = RideMapRouteStyle.strokeColor
             line.geodesic = true
-            line.zIndex = 100
+            line.zIndex = RideMapRouteStyle.strokeZIndex
             line.map = mapView
             activePolyline = line
         }

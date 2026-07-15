@@ -422,11 +422,12 @@ internal class RoutePreviewPlatformView(
 
                     clearRouteOverlays()
 
-                    // Uber-like casing + HOVR green stroke (same as in-trip ride map).
+                    // Fixed screen-pixel width (not zoom-dependent).
                     activePolylines.addAll(
-                        com.hovr.hovr_ride_map.ride.RideMapRouteStyle.addCasingAndStroke(
+                        com.hovr.hovr_ride_map.ride.RideMapRouteStyle.addRoutePolyline(
                             mMap,
                             decodedPath,
+                            fixedContext,
                         ),
                     )
 

@@ -22,6 +22,9 @@ object RideViewChannelHub {
     private var rideMapHandler: MethodChannel.MethodCallHandler? = null
     private val lock = Any()
     private var installed = false
+    /** Messenger this hub is bound to — must rebind when FlutterEngine is recreated. */
+    private var installedMessenger: BinaryMessenger? = null
+    private var channel: MethodChannel? = null
 
     private val noopMethods = setOf(
         "recenter-map",
@@ -76,13 +79,45 @@ object RideViewChannelHub {
 
     fun install(messenger: BinaryMessenger) {
         synchronized(lock) {
-            if (installed) return
-            MethodChannel(messenger, RideMapChannels.rideView).setMethodCallHandler { call, result ->
+            // Same engine + messenger — already listening.
+            if (installed && installedMessenger === messenger) {
+                return
+            }
+
+            // Engine was recreated (Activity kill / FGS process kept alive): old messenger
+            // is dead. Rebind channel + drop handlers from the previous FlutterView.
+            if (installed) {
+                Log.w(TAG, "Rebinding ride-view-channel to new Flutter BinaryMessenger")
+                channel?.setMethodCallHandler(null)
+                handlers.clear()
+                rideMapHandler = null
+            }
+
+            val newChannel = MethodChannel(messenger, RideMapChannels.rideView)
+            newChannel.setMethodCallHandler { call, result ->
                 synchronized(lock) {
                     dispatchLocked(call, result)
                 }
             }
+            channel = newChannel
+            installedMessenger = messenger
             installed = true
+            Log.d(TAG, "RideViewChannelHub installed (messenger=${System.identityHashCode(messenger)})")
+        }
+    }
+
+    /** Called from [HovrRideMapPlugin.onDetachedFromEngine]. */
+    fun uninstall() {
+        synchronized(lock) {
+            channel?.setMethodCallHandler(null)
+            channel = null
+            handlers.clear()
+            rideMapHandler = null
+            pendingDriverLocation = null
+            pendingPolyline = null
+            installedMessenger = null
+            installed = false
+            Log.d(TAG, "RideViewChannelHub uninstalled")
         }
     }
 
@@ -151,10 +186,14 @@ object RideViewChannelHub {
     /** Visible for unit tests — clears stack state between tests. */
     internal fun resetForTest() {
         synchronized(lock) {
+            channel?.setMethodCallHandler(null)
+            channel = null
             handlers.clear()
             rideMapHandler = null
             pendingDriverLocation = null
             pendingPolyline = null
+            installedMessenger = null
+            installed = false
         }
     }
 

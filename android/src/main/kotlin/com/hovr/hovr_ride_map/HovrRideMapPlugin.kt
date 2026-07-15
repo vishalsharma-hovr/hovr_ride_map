@@ -28,6 +28,9 @@ class HovrRideMapPlugin : FlutterPlugin {
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
-        // Platform views unregister automatically when the engine detaches.
+        // Clear hub so the next engine attach rebinds ride-view-channel to the new messenger.
+        // Without this, Activity/engine recreate (FGS keeps process) leaves the hub on a dead
+        // BinaryMessenger and Dart trip-stream map updates never reach native.
+        RideViewChannelHub.uninstall()
     }
 }

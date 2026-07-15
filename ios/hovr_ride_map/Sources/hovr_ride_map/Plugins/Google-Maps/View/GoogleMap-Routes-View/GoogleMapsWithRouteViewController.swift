@@ -383,20 +383,12 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
         }
         
         DispatchQueue.main.async {
-            let brand = UIColor(red: 74/255, green: 171/255, blue: 36/255, alpha: 1)
-            // Uber-like casing + HOVR green core (matches in-trip ride map).
-            let casing = GMSPolyline(path: path)
-            casing.strokeWidth = 14
-            casing.strokeColor = brand.withAlphaComponent(0.35)
-            casing.geodesic = true
-            casing.zIndex = 99
-            casing.map = mapView
-
+            // Fixed screen-point width (not zoom-dependent).
             let routePolyline = GMSPolyline(path: path)
-            routePolyline.strokeWidth = 7
-            routePolyline.strokeColor = brand
+            routePolyline.strokeWidth = RideMapRouteStyle.strokeWidth
+            routePolyline.strokeColor = RideMapRouteStyle.strokeColor
             routePolyline.geodesic = true
-            routePolyline.zIndex = 100
+            routePolyline.zIndex = RideMapRouteStyle.strokeZIndex
             routePolyline.map = mapView
             self.addStopMarkers(on: mapView)
         }
