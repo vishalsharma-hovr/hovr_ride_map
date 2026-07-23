@@ -14,4 +14,14 @@ object MapChromePolicy {
         googleMap.setOnMarkerClickListener { true }
         googleMap.setOnPoiClickListener { true }
     }
+
+    fun applyDisplayOnly(googleMap: GoogleMap) {
+        apply(googleMap)
+        googleMap.uiSettings.apply {
+            isScrollGesturesEnabled = true
+            isZoomGesturesEnabled = true
+            isTiltGesturesEnabled = false
+            isRotateGesturesEnabled = false
+        }
+    }
 }

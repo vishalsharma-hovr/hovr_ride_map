@@ -59,6 +59,10 @@ internal class RoutePreviewPlatformView(
     var computeRoutesResponse: ComputeRoutesResponse
     private var stopsList: List<StopLocation> = emptyList()
     private var dropoffLocationName: String = ""
+    private var pickupLocationName: String = ""
+    private var usePickupAddressMarker: Boolean = false
+    private var useDropoffAddressMarker: Boolean = false
+    private var disableUserInteraction: Boolean = false
 
     private val startingPointView = LayoutInflater.from(fixedContext).inflate(R.layout.eta_marker, null)
     private val etaTextView = startingPointView.findViewById<TextView>(R.id.eta_text)
@@ -128,6 +132,10 @@ internal class RoutePreviewPlatformView(
 
         stopsList = RouteStopParser.parse(argsMap["stops"])
         dropoffLocationName = argsMap["dropoff-location-name"] as? String ?: ""
+        pickupLocationName = argsMap["pickup-location-name"] as? String ?: ""
+        usePickupAddressMarker = argsMap["use-pickup-address-marker"] as? Boolean ?: false
+        useDropoffAddressMarker = argsMap["use-dropoff-address-marker"] as? Boolean ?: false
+        disableUserInteraction = argsMap["disable-user-interaction"] as? Boolean ?: false
         Log.d("RoutesOnMapView", "Parsed ${stopsList.size} stops from ${argsMap["stops"]}")
         val referencePoint = LatLng(43.73835115891842, -79.46301967454586)
 
@@ -263,8 +271,12 @@ internal class RoutePreviewPlatformView(
 
     override fun onMapReady(map: GoogleMap) {
         mMap = map
-        MapChromePolicy.apply(mMap)
-        registerTaggedMarkerClickListener()
+        if (disableUserInteraction) {
+            MapChromePolicy.applyDisplayOnly(mMap)
+        } else {
+            MapChromePolicy.apply(mMap)
+            registerTaggedMarkerClickListener()
+        }
         // Initial draw from booking args; suppressed only after clear-route on this instance.
         if (!routeExplicitlyCleared) {
             drawRoute(
@@ -404,7 +416,11 @@ internal class RoutePreviewPlatformView(
                     longitude = destination.longitude,
                 ).orEmpty()
                 val destinationAddress = dropoffLocationName.ifBlank { destinationName }
-                val destinationTagLabel = formatDurationHMS(durationText)
+                val destinationTagLabel = if (useDropoffAddressMarker) {
+                    "Dropoff"
+                } else {
+                    formatDurationHMS(durationText)
+                }
                 val pointA = origin
                 val pointB = destination
                 val boundsBuilder = LatLngBounds.Builder().apply {
@@ -432,13 +448,31 @@ internal class RoutePreviewPlatformView(
                     )
 
                     pendingDriverEtaSeconds?.let { etaTextView.text = etaMinutesLabel(it) }
-                    val startBitmap = BitmapDescriptorFactory.fromBitmap(
-                        createBitmapFromView(startingPointView)
-                    )
-                    startMarker = mMap.addMarker(
-                        MarkerOptions().position(pointA).icon(startBitmap),
-                    )
-                    startMarker?.also { activeMarkers.add(it) }
+                    if (usePickupAddressMarker) {
+                        val pickupName = pickupLocationName.ifBlank {
+                            getPlaceNameFromCoordinates(
+                                context = fixedContext,
+                                latitude = pointA.latitude,
+                                longitude = pointA.longitude,
+                            ).orEmpty()
+                        }
+                        addTaggedMarker(
+                            position = pointA,
+                            tag = RouteTaggedMarkerTag(
+                                kind = RouteTaggedMarkerKind.DESTINATION,
+                                tagLabel = "Pickup",
+                                address = pickupName.ifBlank { "Pickup" },
+                            ),
+                        )
+                    } else {
+                        val startBitmap = BitmapDescriptorFactory.fromBitmap(
+                            createBitmapFromView(startingPointView)
+                        )
+                        startMarker = mMap.addMarker(
+                            MarkerOptions().position(pointA).icon(startBitmap),
+                        )
+                        startMarker?.also { activeMarkers.add(it) }
+                    }
 
                     addTaggedMarker(
                         position = decodedPath.last(),

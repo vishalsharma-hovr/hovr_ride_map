@@ -39,4 +39,12 @@ enum MapChromePolicy {
         mapView.settings.myLocationButton = false
         mapView.settings.compassButton = false
     }
+
+    static func applyDisplayOnly(to mapView: GMSMapView) {
+        apply(to: mapView)
+        mapView.settings.scrollGestures = true
+        mapView.settings.zoomGestures = true
+        mapView.settings.rotateGestures = false
+        mapView.settings.tiltGestures = false
+    }
 }

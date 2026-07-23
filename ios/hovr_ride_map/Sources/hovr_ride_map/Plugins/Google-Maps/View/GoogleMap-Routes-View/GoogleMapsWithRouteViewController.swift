@@ -28,6 +28,9 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
     @State var endPoint: LatLng?
     @State var routeFetcher :[String:Any]
     var stops: [RouteStopLocation] = []
+    var usePickupAddressMarker: Bool = false
+    var useDropoffAddressMarker: Bool = false
+    var disableUserInteraction: Bool = false
     
     @State private var updateTimer: Timer?
     @State private var travelDurationSeconds: Int = 0
@@ -42,6 +45,9 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
         var parent: GoogleMapsWithRouteViewController
         weak var mapView: GMSMapView?
         private var recenterCancellable: AnyCancellable?
+        var routeBounds: GMSCoordinateBounds?
+        var routePadding: CGFloat = 120
+        var routePath: GMSPath?
 
         init(parent: GoogleMapsWithRouteViewController) {
             self.parent = parent
@@ -58,16 +64,29 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
                           let origin = self.parent.originLocation,
                           let destination = self.parent.destinationLocation else { return }
 
-                    self.parent.updateCameraPosition(
-                        mapView: mapView,
-                        origin: origin,
-                        destination: destination
-                    )
+                    if self.parent.disableUserInteraction {
+                        self.parent.performRoutePreviewCamera(
+                            on: mapView,
+                            origin: origin,
+                            destination: destination,
+                            path: self.routePath,
+                            coordinator: self
+                        )
+                    } else {
+                        self.parent.updateCameraPosition(
+                            mapView: mapView,
+                            origin: origin,
+                            destination: destination
+                        )
+                    }
                     controller.shouldRecenter = false
                 }
         }
 
         func mapView(_ mapView: GMSMapView, didTap marker: GMSMarker) -> Bool {
+            if parent.disableUserInteraction {
+                return true
+            }
             print("🟢 didTap marker at \(marker.position.latitude), \(marker.position.longitude) — userData=\(String(describing: marker.userData))")
             guard let data = marker.userData as? RouteTaggedMarkerData else {
                 print("🔴 didTap: marker.userData is not RouteTaggedMarkerData — ignoring tap")
@@ -94,11 +113,15 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
         let camera = GMSCameraPosition.camera(withLatitude: origin.latitude, longitude: origin.longitude, zoom: zoom)
         let mapView = GMSMapView.map(withFrame: CGRect.zero, camera: camera)
         mapView.delegate = context.coordinator
-        MapChromePolicy.apply(to: mapView)
-        // Enable zoom, scroll, and other gesture settings
-        mapView.settings.zoomGestures = true
-        mapView.settings.scrollGestures = true
-        mapView.settings.rotateGestures = true
+        if disableUserInteraction {
+            MapChromePolicy.applyDisplayOnly(to: mapView)
+        } else {
+            MapChromePolicy.apply(to: mapView)
+            // Enable zoom, scroll, and other gesture settings
+            mapView.settings.zoomGestures = true
+            mapView.settings.scrollGestures = true
+            mapView.settings.rotateGestures = true
+        }
 //        mapView.settings.myLocationButton = true
         // Load custom map style
         do {
@@ -117,11 +140,23 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
         return mapView
     }
 
-    private func recenterRoute(on mapView: GMSMapView) {
+    private func recenterRoute(on mapView: GMSMapView, coordinator: Coordinator? = nil) {
+        if disableUserInteraction {
+            guard let origin = originLocation, let destination = destinationLocation else { return }
+            performRoutePreviewCamera(
+                on: mapView,
+                origin: origin,
+                destination: destination,
+                path: coordinator?.routePath,
+                coordinator: coordinator
+            )
+            return
+        }
+
         guard let start = startPoint, let end = endPoint else {
             return
         }
-        
+
         let bounds = GMSCoordinateBounds(
             coordinate: CLLocationCoordinate2D(
                 latitude: originLocation!.latitude,
@@ -131,7 +166,61 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
         )
         let update = GMSCameraUpdate.fit(bounds, withPadding: 60)
         mapView.animate(with: update)
-        
+    }
+
+    private func dynamicPadding(for distanceMeters: CLLocationDistance) -> CGFloat {
+        switch distanceMeters {
+        case ..<2000: return 150
+        case ..<5000: return 120
+        case ..<10000: return 100
+        case ..<20000: return 80
+        case ..<50000: return 60
+        default: return 40
+        }
+    }
+
+    private func buildRouteBounds(
+        path: GMSPath?,
+        origin: CLLocationCoordinate2D,
+        destination: CLLocationCoordinate2D
+    ) -> GMSCoordinateBounds {
+        var bounds = GMSCoordinateBounds()
+        if let path {
+            for index in 0..<path.count() {
+                bounds = bounds.includingCoordinate(path.coordinate(at: index))
+            }
+        }
+        bounds = bounds.includingCoordinate(origin)
+        bounds = bounds.includingCoordinate(destination)
+        for stop in stops {
+            bounds = bounds.includingCoordinate(stop.coordinate)
+        }
+        return bounds
+    }
+
+    func performRoutePreviewCamera(
+        on mapView: GMSMapView,
+        origin: CLLocationCoordinate2D,
+        destination: CLLocationCoordinate2D,
+        path: GMSPath?,
+        coordinator: Coordinator?
+    ) {
+        let resolvedPath = path ?? coordinator?.routePath
+        let bounds = buildRouteBounds(path: resolvedPath, origin: origin, destination: destination)
+        let distance = CLLocation(latitude: origin.latitude, longitude: origin.longitude)
+            .distance(from: CLLocation(latitude: destination.latitude, longitude: destination.longitude))
+        let padding = dynamicPadding(for: distance) - 20
+
+        coordinator?.routeBounds = bounds
+        coordinator?.routePadding = padding
+        coordinator?.routePath = resolvedPath
+
+        let cameraUpdate = GMSCameraUpdate.fit(bounds, withPadding: padding)
+        mapView.animate(with: cameraUpdate)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            mapView.animate(with: GMSCameraUpdate.zoom(by: -0.9))
+        }
     }
 
         // Add these functions inside your struct
@@ -186,7 +275,7 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
         }
 
         if let destinationLocation = destinationLocation, let origin = originLocation {
-            drawRoute(from: origin, to: destinationLocation, on: mapView)
+            drawRoute(from: origin, to: destinationLocation, on: mapView, coordinator: context.coordinator)
         }
     }
 
@@ -217,7 +306,7 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
         let marker = GMSMarker(position: coordinate)
         markerData.attach(to: marker)
         marker.userData = markerData
-        marker.isTappable = true
+        marker.isTappable = !disableUserInteraction
         marker.zIndex = 2
         marker.map = mapView
     }
@@ -246,7 +335,13 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
         }
     }
 
-    func updateCameraPosition(mapView: GMSMapView, origin: CLLocationCoordinate2D, destination: CLLocationCoordinate2D) {
+    func updateCameraPosition(
+        mapView: GMSMapView,
+        origin: CLLocationCoordinate2D,
+        destination: CLLocationCoordinate2D,
+        bounds: GMSCoordinateBounds? = nil,
+        padding: CGFloat = 120
+    ) {
         let originCL = CLLocation(latitude: origin.latitude, longitude: origin.longitude)
         let destinationCL = CLLocation(latitude: destination.latitude, longitude: destination.longitude)
         let distanceInMeters = originCL.distance(from: destinationCL)
@@ -254,16 +349,14 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
         print("📏 Distance between origin and destination: \(distanceInMeters) meters")
 
         let bearing = calculateBearing(from: origin, to: destination)
+        let fitBounds = bounds ?? buildRouteBounds(
+            path: nil,
+            origin: origin,
+            destination: destination
+        )
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            var bounds = GMSCoordinateBounds()
-            bounds = bounds.includingCoordinate(origin)
-            bounds = bounds.includingCoordinate(destination)
-            for stop in stops {
-                bounds = bounds.includingCoordinate(stop.coordinate)
-            }
-
-            let cameraUpdate = GMSCameraUpdate.fit(bounds, withPadding: 120)
+            let cameraUpdate = GMSCameraUpdate.fit(fitBounds, withPadding: padding)
             mapView.animate(with: cameraUpdate)
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -328,7 +421,12 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
         return String(max(Int((Double(seconds) / 60.0).rounded()), 1))
     }
 
-    private func drawRoute(from origin: CLLocationCoordinate2D, to destination: CLLocationCoordinate2D, on mapView: GMSMapView) {
+    private func drawRoute(
+        from origin: CLLocationCoordinate2D,
+        to destination: CLLocationCoordinate2D,
+        on mapView: GMSMapView,
+        coordinator: Coordinator
+    ) {
         // print("🔍 routeFetcher raw value:", routeFetcher)
         // print("🧩 Type of routeFetcher:", type(of: routeFetcher))
         
@@ -381,6 +479,8 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
             print("❌ Failed to decode polyline string")
             return
         }
+
+        coordinator.routePath = path
         
         DispatchQueue.main.async {
             // Fixed screen-point width (not zoom-dependent).
@@ -389,6 +489,7 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
             routePolyline.strokeColor = RideMapRouteStyle.strokeColor
             routePolyline.geodesic = true
             routePolyline.zIndex = RideMapRouteStyle.strokeZIndex
+            routePolyline.isTappable = false
             routePolyline.map = mapView
             self.addStopMarkers(on: mapView)
         }
@@ -400,20 +501,22 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
             self.startPoint = LatLng(latitude: origin.latitude, longitude: origin.longitude)
             self.endPoint = LatLng(latitude: destination.latitude, longitude: destination.longitude)
         }
-        
+
+        if !disableUserInteraction {
             // MARK: - Adjust camera
-        var bounds = GMSCoordinateBounds()
-        for i in 0..<path.count() {
-            bounds = bounds.includingCoordinate(path.coordinate(at: i))
-        }
-        bounds = bounds.includingCoordinate(origin)
-        bounds = bounds.includingCoordinate(destination)
-        for stop in stops {
-            bounds = bounds.includingCoordinate(stop.coordinate)
-        }
-        let update = GMSCameraUpdate.fit(bounds, withPadding: 80)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            mapView.animate(with: update)
+            var bounds = GMSCoordinateBounds()
+            for i in 0..<path.count() {
+                bounds = bounds.includingCoordinate(path.coordinate(at: i))
+            }
+            bounds = bounds.includingCoordinate(origin)
+            bounds = bounds.includingCoordinate(destination)
+            for stop in stops {
+                bounds = bounds.includingCoordinate(stop.coordinate)
+            }
+            let update = GMSCameraUpdate.fit(bounds, withPadding: 80)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                mapView.animate(with: update)
+            }
         }
         
             // MARK: - ETA Timer
@@ -448,51 +551,69 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
             
             print("🕒 \(formattedTime)")
         }
+
+        if !disableUserInteraction {
             // MARK: - Adjust camera
-        for i in 0..<path.count() {
-            bounds = bounds.includingCoordinate(path.coordinate(at: i))
-        }
-        
+            var bounds = GMSCoordinateBounds()
+            for i in 0..<path.count() {
+                bounds = bounds.includingCoordinate(path.coordinate(at: i))
+            }
+
             // Instead of directly calling animate(with:update)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            if let origin = originLocation, let destination = destinationLocation {
-                updateCameraPosition(mapView: mapView, origin: origin, destination: destination)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                if let origin = originLocation, let destination = destinationLocation {
+                    updateCameraPosition(mapView: mapView, origin: origin, destination: destination)
+                }
             }
         }
 
             // MARK: - Starting Point Marker
         DispatchQueue.main.async {
-            let etaText = self.pickupEtaMinutes(
-                fromSecondsText: ETAController.shared.etaValue
-            )
-            let startMarkerView = StartPinMarkerView(time: etaText)
-            let host = UIHostingController(rootView: startMarkerView)
-            host.view.backgroundColor = .clear
-            host.view.frame = CGRect(x: 0, y: 0, width: 80, height: 100)
+            if self.usePickupAddressMarker {
+                let pickupAddress = self.startLocationAddress?.isEmpty == false
+                    ? self.startLocationAddress!
+                    : "Pickup"
+                self.addTaggedMarker(
+                    on: mapView,
+                    at: origin,
+                    tagLabel: "Pickup",
+                    address: pickupAddress
+                )
+            } else {
+                let etaText = self.pickupEtaMinutes(
+                    fromSecondsText: ETAController.shared.etaValue
+                )
+                let startMarkerView = StartPinMarkerView(time: etaText)
+                let host = UIHostingController(rootView: startMarkerView)
+                host.view.backgroundColor = .clear
+                host.view.frame = CGRect(x: 0, y: 0, width: 80, height: 100)
 
-            let startMarker = GMSMarker(position: origin)
-            startMarker.iconView = host.view
-            startMarker.groundAnchor = CGPoint(x: 0.5, y: 0.82)
-            startMarker.tracksViewChanges = true
-            startMarker.zIndex = 2
-            startMarker.isTappable = false
-            startMarker.map = mapView
+                let startMarker = GMSMarker(position: origin)
+                startMarker.iconView = host.view
+                startMarker.groundAnchor = CGPoint(x: 0.5, y: 0.82)
+                startMarker.tracksViewChanges = true
+                startMarker.zIndex = 2
+                startMarker.isTappable = false
+                startMarker.map = mapView
 
-            etaSubscriber = ETAController.shared.$etaValue
-                .receive(on: RunLoop.main)
-                .sink { newEta in
-                    guard !newEta.isEmpty else { return }
-                    let minutes = self.pickupEtaMinutes(fromSecondsText: newEta)
-                    let updatedView = StartPinMarkerView(time: minutes)
-                    let updatedHost = UIHostingController(rootView: updatedView)
-                    updatedHost.view.backgroundColor = .clear
-                    updatedHost.view.frame = host.view.frame
-                    startMarker.iconView = updatedHost.view
-                }
+                etaSubscriber = ETAController.shared.$etaValue
+                    .receive(on: RunLoop.main)
+                    .sink { newEta in
+                        guard !newEta.isEmpty else { return }
+                        let minutes = self.pickupEtaMinutes(fromSecondsText: newEta)
+                        let updatedView = StartPinMarkerView(time: minutes)
+                        let updatedHost = UIHostingController(rootView: updatedView)
+                        updatedHost.view.backgroundColor = .clear
+                        updatedHost.view.frame = host.view.frame
+                        startMarker.iconView = updatedHost.view
+                    }
+            }
         }
 
             // MARK: - Destination Marker
-        let destinationTag = durationTagLabel(seconds: duration)
+        let destinationTag = useDropoffAddressMarker
+            ? "Dropoff"
+            : durationTagLabel(seconds: duration)
         let destinationAddress = dropOffLocationAddress?.isEmpty == false
             ? dropOffLocationAddress!
             : "Destination"
@@ -511,10 +632,21 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
                 "📍 Destination marker set at polyline end: \(destinationCoordinate.latitude), \(destinationCoordinate.longitude)"
             )
         }
-       
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            self.recenterRoute(on: mapView)
-            
+
+        if disableUserInteraction {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                self.performRoutePreviewCamera(
+                    on: mapView,
+                    origin: origin,
+                    destination: destination,
+                    path: path,
+                    coordinator: coordinator
+                )
+            }
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                self.recenterRoute(on: mapView, coordinator: coordinator)
+            }
         }
              
     }

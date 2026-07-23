@@ -113,6 +113,21 @@ class RouteOnGoogleMapsView: NSObject, FlutterPlatformView {
             updatedSnapshot["durationSeconds"] = "0" // default if missing
         }
       
+        let usePickupAddressMarker: Bool = {
+            guard let argsDict = args as? [String: Any] else { return false }
+            return argsDict["use-pickup-address-marker"] as? Bool ?? false
+        }()
+
+        let useDropoffAddressMarker: Bool = {
+            guard let argsDict = args as? [String: Any] else { return false }
+            return argsDict["use-dropoff-address-marker"] as? Bool ?? false
+        }()
+
+        let disableUserInteraction: Bool = {
+            guard let argsDict = args as? [String: Any] else { return false }
+            return argsDict["disable-user-interaction"] as? Bool ?? false
+        }()
+
         let googleMapsWithRoute = GoogleMapsWithRoute(
             mapController: sharedController,
             destinationLocation: destination,
@@ -123,7 +138,10 @@ class RouteOnGoogleMapsView: NSObject, FlutterPlatformView {
             routeData : updatedSnapshot,
             pickUpAddress: pickupAddress,
             dropOffAddress: dropOffAddress,
-            stops: stops
+            stops: stops,
+            usePickupAddressMarker: usePickupAddressMarker,
+            useDropoffAddressMarker: useDropoffAddressMarker,
+            disableUserInteraction: disableUserInteraction
         )
         
         print("🔍 RouteOnGoogleMapsView PARAMS:")

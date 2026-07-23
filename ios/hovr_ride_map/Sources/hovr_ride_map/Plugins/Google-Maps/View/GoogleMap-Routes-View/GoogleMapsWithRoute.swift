@@ -353,6 +353,9 @@ struct GoogleMapsWithRoute: View {
     var pickUpAddress: String
     var dropOffAddress: String
     var stops: [RouteStopLocation] = []
+    var usePickupAddressMarker: Bool = false
+    var useDropoffAddressMarker: Bool = false
+    var disableUserInteraction: Bool = false
 
     var body: some View {
         GoogleMapsWithRouteViewController(
@@ -363,7 +366,10 @@ struct GoogleMapsWithRoute: View {
             dropOffLocationAddress: dropOffAddress,
             controller: mapController,
             routeFetcher: routeData,
-            stops: stops
+            stops: stops,
+            usePickupAddressMarker: usePickupAddressMarker,
+            useDropoffAddressMarker: useDropoffAddressMarker,
+            disableUserInteraction: disableUserInteraction
         )
         .edgesIgnoringSafeArea(.all)
     }
