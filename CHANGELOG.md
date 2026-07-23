@@ -1,3 +1,9 @@
+## 1.0.5
+
+- Route preview: optional pickup/dropoff address markers (`use-pickup-address-marker`, `use-dropoff-address-marker`)
+- Route preview: display-only chrome with limited gestures (`disable-user-interaction`) for scheduled-trip/receipt maps
+- Android/iOS: `MapChromePolicy.applyDisplayOnly` for scroll/zoom without rotate/tilt
+
 ## 1.0.4
 
 - Route in-trip polylines and driver updates to RideMap instead of home/preview handlers
