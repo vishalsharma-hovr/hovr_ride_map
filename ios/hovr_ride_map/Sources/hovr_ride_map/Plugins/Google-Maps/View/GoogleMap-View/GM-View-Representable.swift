@@ -48,7 +48,7 @@ struct GoogleMapsViewRepresentable: UIViewRepresentable {
             let marker = GMSMarker(position: position)
             if isDriver, let carImage = HovrRideMapResources.image(named: "car-icon") {
                 let scale = zoomScale(for: mapView.camera.zoom)
-                marker.icon = carImage.resized(to: CGSize(width: scale, height: scale))
+                marker.icon = HovrFestiveCar.icon(length: scale) ?? carImage.resized(to: CGSize(width: scale, height: scale))
             } else if !isDriver {
                 // Default red pin for non-driver markers if needed
                 marker.icon = GMSMarker.markerImage(with: .red)
@@ -81,6 +81,7 @@ struct GoogleMapsViewRepresentable: UIViewRepresentable {
         let camera = GMSCameraPosition.camera(withLatitude: latitude, longitude: longitude, zoom: zoom)
         let newMapView = GMSMapView(frame: .zero, camera: camera)
         configureMapSettings(newMapView)      
+        MapStylePolicy.shared.attach(newMapView)
         context.coordinator.mapView = newMapView
         return newMapView
     }

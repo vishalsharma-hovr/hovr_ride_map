@@ -8,6 +8,9 @@ class RideMapChannels {
   static const meetAtPickup = 'meet-at-pickup-spot-view';
   static const globalChannel = 'com.hovr/global_channel';
 
+  /// Host app's map style (light/dark/festive), applied to every native map.
+  static const mapStyle = 'hovr-ride-map/style';
+
   static const homeViewType = 'home-view-google-map';
   static const rideViewType = 'hovr-ride-map-view';
   static const legacyRideViewType = 'meet-at-pickup-spot-view';

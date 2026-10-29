@@ -14,6 +14,7 @@ public class HovrRideMapPlugin: NSObject, FlutterPlugin {
         GoogleMapsPlugin.install(messenger: messenger)
         ShowNearByDriverPlugin.install(messenger: messenger)
         GlobalFlutterBridge.shared.setupChannels(messenger: messenger)
+        installMapStyleChannel(messenger: messenger)
 
         registrar.register(
             HomeViewGoogleMapPlatformViewFactory(messenger: messenger),
@@ -28,6 +29,32 @@ public class HovrRideMapPlugin: NSObject, FlutterPlugin {
             RouteOnGoogleMapViewFactory(messenger: messenger),
             withId: RideMapViewType.routePreview
         )
+    }
+
+    private static var mapStyleChannel: FlutterMethodChannel?
+
+    /// Host app's light/dark/festive map style → every ride map.
+    private static func installMapStyleChannel(messenger: FlutterBinaryMessenger) {
+        let channel = FlutterMethodChannel(name: "hovr-ride-map/style", binaryMessenger: messenger)
+        channel.setMethodCallHandler { call, result in
+            switch call.method {
+            case "set-map-style":
+                let json = (call.arguments as? [String: Any])?["json"] as? String
+                MapStylePolicy.shared.update(json: json)
+            case "set-car-icon":
+                // Festive car for every map; nil restores the HOVR car.
+                let png = (call.arguments as? [String: Any])?["png"] as? FlutterStandardTypedData
+                HovrFestiveCar.set(png: png?.data)
+            case "set-map-colors":
+                // Applies to routes and markers drawn from now on.
+                MapThemeColors.current = MapThemeColors.fromArgs(call.arguments)
+            default:
+                result(FlutterMethodNotImplemented)
+                return
+            }
+            result(nil)
+        }
+        mapStyleChannel = channel
     }
 
     private static func configureGoogleMapsIfNeeded() {

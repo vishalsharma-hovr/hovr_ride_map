@@ -1,3 +1,7 @@
+## Unreleased
+
+- `RideMapController.setMapStyle(json)` styles every native map (home, in-trip, route preview) with the host app's light/dark/festive map style; null keeps each map's default look.
+
 ## 1.0.5
 
 - Route preview: optional pickup/dropoff address markers (`use-pickup-address-marker`, `use-dropoff-address-marker`)

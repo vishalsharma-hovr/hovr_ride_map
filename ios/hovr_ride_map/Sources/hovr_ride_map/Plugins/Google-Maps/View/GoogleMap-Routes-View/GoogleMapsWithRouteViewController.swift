@@ -123,17 +123,18 @@ struct GoogleMapsWithRouteViewController: UIViewRepresentable {
             mapView.settings.rotateGestures = true
         }
 //        mapView.settings.myLocationButton = true
-        // Load custom map style
+        // HOVR style by default; the host app's light/dark/festive style wins.
+        var hovrStyle: GMSMapStyle?
         do {
             if let styleURL = HovrRideMapResources.url(forResource: "hovr_map_style", withExtension: "json") {
-                mapView.mapStyle = try
-                    GMSMapStyle(contentsOfFileURL: styleURL)
+                hovrStyle = try GMSMapStyle(contentsOfFileURL: styleURL)
             } else {
                 print("Unable to find \("hovr_map_style").json")
             }
         } catch {
             print("Error loading map style: \(error)")
         }
+        MapStylePolicy.shared.attach(mapView, defaultStyle: hovrStyle)
         context.coordinator.mapView = mapView
         context.coordinator.parent = self
         context.coordinator.bindRecenterObserver(for: controller)

@@ -10,7 +10,7 @@ import GoogleMaps
 
 final class CarMarkers {
     private let map: GMSMapView
-    private let icon: UIImage
+    private var icon: UIImage
     private var markersById: [String: GMSMarker] = [:]
     private var lastFix: [String: CarFix] = [:]
     private var lastUpdateTime: [String: TimeInterval] = [:]
@@ -192,6 +192,12 @@ final class CarMarkers {
             lastFix[fix.id] = fix
             lastUpdateTime[fix.id] = nowMs
         }
+    }
+
+    /// Swaps the car icon on every marker, e.g. after the app theme changed.
+    func setIcon(_ newIcon: UIImage) {
+        icon = newIcon
+        for marker in markersById.values { marker.icon = newIcon }
     }
 
     func marker(for id: String) -> GMSMarker? {

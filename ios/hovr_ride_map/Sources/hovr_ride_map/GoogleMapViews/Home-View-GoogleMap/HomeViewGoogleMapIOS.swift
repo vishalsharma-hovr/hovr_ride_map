@@ -18,6 +18,10 @@ final class HomeViewGoogleMapIOS: NSObject, FlutterPlatformView {
     private let mapView: GMSMapView
     private let locationManager: CLLocationManager
     private var carMarkers: CarMarkers!  // Force unwrapped - will always be initialized
+    /// Untinted car artwork and the theme colour it was last painted in.
+    private var carIconBase: UIImage?
+    private var carIconTint: UInt32?
+    private var carIconFestiveVersion = -1
     private var startMarker: GMSMarker?
     private var firstFix = true
     
@@ -82,6 +86,7 @@ final class HomeViewGoogleMapIOS: NSObject, FlutterPlatformView {
         // print("🟢 CarMarkers created: \(self.carMarkers != nil)")
         
         setupMapView()
+        MapStylePolicy.shared.attach(mapView)
         setupLocationManager()
         registerWithStack()
         observeRecenterFlag()
@@ -124,7 +129,8 @@ final class HomeViewGoogleMapIOS: NSObject, FlutterPlatformView {
         let finalIcon = icon ?? createEmergencyIcon()
         print("🟢 Final icon created: \(finalIcon.size)")
         
-        let markers = CarMarkers(map: mapView, icon: finalIcon)
+        carIconBase = finalIcon
+        let markers = CarMarkers(map: mapView, icon: themedCarIcon(finalIcon))
         print("🟢 CarMarkers instance created successfully")
         
         return markers
@@ -407,6 +413,7 @@ final class HomeViewGoogleMapIOS: NSObject, FlutterPlatformView {
         if !batch.isEmpty {
             // print("🔵 Upserting \(batch.count) markers")
             // print("🔵 Marker IDs: \(batch.map { $0.id })")
+            refreshCarIconIfThemeChanged()
             carMarkers.upsert(fixes: batch, nowMs: CACurrentMediaTime())
             
             let interval = drainIntervalMs
@@ -438,6 +445,24 @@ final class HomeViewGoogleMapIOS: NSObject, FlutterPlatformView {
         drainIntervalMs = sec
     }
     
+    /// Car marker in the app theme's accent colour (light/dark/festive).
+    private func themedCarIcon(_ base: UIImage) -> UIImage {
+        let tint = MapThemeColors.current.accent
+        carIconTint = tint
+        carIconFestiveVersion = HovrFestiveCar.version
+        // Festive artwork keeps its own colours and its tall shape.
+        if let festive = HovrFestiveCar.icon(length: 28) { return festive }
+        return HovrCarIconTint.tinted(base, tint: tint)
+    }
+
+    /// Theme changes arrive between driver updates, so recolour on the next batch.
+    private func refreshCarIconIfThemeChanged() {
+        guard let base = carIconBase,
+              MapThemeColors.current.accent != carIconTint || HovrFestiveCar.version != carIconFestiveVersion
+        else { return }
+        carMarkers.setIcon(themedCarIcon(base))
+    }
+
     private func scaleImage(_ image: UIImage, toSize size: CGSize) -> UIImage {
         UIGraphicsBeginImageContextWithOptions(size, false, 0.0)
         image.draw(in: CGRect(origin: .zero, size: size))

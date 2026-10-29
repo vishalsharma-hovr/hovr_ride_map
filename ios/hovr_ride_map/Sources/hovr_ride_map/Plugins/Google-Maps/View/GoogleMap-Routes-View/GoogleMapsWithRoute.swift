@@ -88,31 +88,31 @@ struct RouteAddressTagMarkerView: View {
                             .frame(width: 20, height: 20)
                             .overlay {
                                 Circle()
-                                    .fill(Color(red: 74 / 255, green: 171 / 255, blue: 36 / 255))
+                                    .fill(MapThemeColors.current.accent.argbColor)
                                     .frame(width: 12, height: 12)
                             }
 
                         Text(tagLabel)
                             .font(.system(size: 12, weight: .bold))
-                            .foregroundColor(.white)
+                            .foregroundColor(MapThemeColors.current.onAccent.argbColor)
                             .lineLimit(1)
                     }
                 }
 
             Text(address)
                 .font(.system(size: 12))
-                .foregroundColor(.black)
+                .foregroundColor(MapThemeColors.current.onSurface.argbColor)
                 .lineLimit(addressLineLimit)
                 .truncationMode(.tail)
                 .multilineTextAlignment(.leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Image(systemName: "chevron.right")
-                .foregroundColor(.black)
+                .foregroundColor(MapThemeColors.current.onSurface.argbColor)
                 .padding(.horizontal, 10)
         }
         .frame(width: markerWidth, height: markerHeight, alignment: .leading)
-        .background(Color.white)
+        .background(MapThemeColors.current.surface.argbColor)
         .cornerRadius(50)
         .contentShape(Rectangle())
         .onTapGesture {
@@ -127,14 +127,14 @@ struct StopPinMarkerView: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(Color.white)
+                .fill(MapThemeColors.current.surface.argbColor)
                 .frame(width: 28, height: 28)
             Circle()
-                .stroke(Color(red: 74 / 255, green: 171 / 255, blue: 36 / 255), lineWidth: 2.5)
+                .stroke(MapThemeColors.current.accent.argbColor, lineWidth: 2.5)
                 .frame(width: 28, height: 28)
             Text("\(stopNumber)")
                 .font(.system(size: 12, weight: .bold))
-                .foregroundColor(Color(red: 0.12, green: 0.12, blue: 0.12))
+                .foregroundColor(MapThemeColors.current.onSurface.argbColor)
         }
         .shadow(color: .black.opacity(0.15), radius: 2, x: 0, y: 1)
     }
@@ -152,10 +152,11 @@ struct StopTaggedMarkerView: View {
 /// Draws route preview destination/stop markers directly to a bitmap (matches Android `RouteTaggedMarkerBitmap`).
 private enum RouteTaggedMarkerBitmap {
     private static let collapsedAddressWidth: CGFloat = 100
-    private static let routeGreenBright = UIColor(red: 74 / 255, green: 171 / 255, blue: 36 / 255, alpha: 1)
-    private static let routeGreenPill = UIColor(red: 39 / 255, green: 90 / 255, blue: 19 / 255, alpha: 1)
-    private static let routeGreenRing = UIColor(red: 74 / 255, green: 171 / 255, blue: 36 / 255, alpha: 1)
-    private static let routeGreenRingInner = UIColor(red: 208 / 255, green: 238 / 255, blue: 196 / 255, alpha: 1)
+    // App theme colours (HOVR greens by default), read when each marker is drawn.
+    private static var routeGreenBright: UIColor { MapThemeColors.current.accent.argbUIColor }
+    private static var routeGreenPill: UIColor { MapThemeColors.current.accentStrong.argbUIColor }
+    private static var routeGreenRing: UIColor { MapThemeColors.current.accent.argbUIColor }
+    private static var routeGreenRingInner: UIColor { MapThemeColors.current.accentContainer.argbUIColor }
 
     static func bitmapFor(tagLabel: String, address: String, expanded: Bool) -> UIImage {
         let displayAddress = address.isEmpty ? tagLabel : address
@@ -183,7 +184,7 @@ private enum RouteTaggedMarkerBitmap {
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
         return renderer.image { _ in
             let bounds = CGRect(origin: .zero, size: size)
-            UIColor.white.setFill()
+            MapThemeColors.current.surface.argbUIColor.setFill()
             UIBezierPath(roundedRect: bounds, cornerRadius: 15).fill()
 
             let pillY = (totalHeight - 30) / 2
@@ -212,7 +213,7 @@ private enum RouteTaggedMarkerBitmap {
                 in: tagRect,
                 withAttributes: [
                     .font: tagFont,
-                    .foregroundColor: UIColor.white,
+                    .foregroundColor: MapThemeColors.current.onAccent.argbUIColor,
                     .paragraphStyle: tagStyle,
                 ]
             )
@@ -231,7 +232,7 @@ private enum RouteTaggedMarkerBitmap {
                 options: [.usesLineFragmentOrigin, .usesFontLeading, .truncatesLastVisibleLine],
                 attributes: [
                     .font: addressFont,
-                    .foregroundColor: UIColor.black,
+                    .foregroundColor: MapThemeColors.current.onSurface.argbUIColor,
                     .paragraphStyle: addressStyle,
                 ],
                 context: nil
@@ -240,7 +241,7 @@ private enum RouteTaggedMarkerBitmap {
             let chevronX = addressX + addressWidth + 8
             let chevronY = (totalHeight - 20) / 2
             if let chevron = UIImage(systemName: "chevron.right")?
-                .withTintColor(.black, renderingMode: .alwaysOriginal) {
+                .withTintColor(MapThemeColors.current.onSurface.argbUIColor, renderingMode: .alwaysOriginal) {
                 chevron.draw(in: CGRect(x: chevronX, y: chevronY, width: 20, height: 20))
             }
         }

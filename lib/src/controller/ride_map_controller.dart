@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:developer';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 import 'package:hovr_ride_map/src/channels/ride_map_channels.dart';
 import 'package:hovr_ride_map/src/models/driver_marker.dart';
 import 'package:hovr_ride_map/src/models/lat_lng.dart';
+import 'package:hovr_ride_map/src/models/ride_map_colors.dart';
 import 'package:hovr_ride_map/src/models/ride_map_mode.dart';
 
 /// Typed facade over native ride map method channels.
@@ -18,6 +20,7 @@ class RideMapController {
   final _showDriversChannel = const MethodChannel(RideMapChannels.showDrivers);
   final _routesChannel = const MethodChannel(RideMapChannels.routesOnMap);
   final _globalChannel = const MethodChannel(RideMapChannels.globalChannel);
+  final _styleChannel = const MethodChannel(RideMapChannels.mapStyle);
 
   final _etaController = StreamController<Duration>.broadcast();
 
@@ -163,6 +166,26 @@ class RideMapController {
       'redraw-route-preview',
       arguments: {'computeRoutesResponseJson': computeRoutesResponseJson},
     );
+  }
+
+  /// Styles every native map with Google map-style [json] (the host app's
+  /// light/dark/festive theme); null restores each map's default look.
+  Future<void> setMapStyle(String? json) async {
+    assert(json == null || json.trimLeft().startsWith('['), 'map style must be a JSON list');
+    await _safeInvoke(_styleChannel, 'set-map-style', arguments: {'json': json});
+  }
+
+  /// Draws routes and markers on every native map in the host app's theme
+  /// colours (light/dark/festive).
+  Future<void> setMapColors(RideMapColors colors) async {
+    await _safeInvoke(_styleChannel, 'set-map-colors', arguments: colors.toMap());
+  }
+
+  /// Shows [png] (a top-down car, nose up) for every car on the native maps,
+  /// in its own colours; null restores the HOVR car in the theme colour.
+  Future<void> setCarIcon(Uint8List? png) async {
+    assert(png == null || png.isNotEmpty, 'car icon must not be empty');
+    await _safeInvoke(_styleChannel, 'set-car-icon', arguments: {'png': png});
   }
 
   Future<void> setEta(Duration eta) async {

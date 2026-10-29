@@ -9,7 +9,7 @@ import android.view.animation.LinearInterpolator
 import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.model.*
 
-class CarMarkers(private val map: GoogleMap, private val icon: BitmapDescriptor) {
+class CarMarkers(private val map: GoogleMap, private var icon: BitmapDescriptor) {
     private val markersById = mutableMapOf<String, Marker>()
     private val lastFix = mutableMapOf<String, CarFix>()
     private val lastUpdateTime = mutableMapOf<String, Long>()
@@ -136,6 +136,12 @@ class CarMarkers(private val map: GoogleMap, private val icon: BitmapDescriptor)
             lastFix[fix.id] = fix
             lastUpdateTime[fix.id] = nowMs
         }
+    }
+
+    /** Swaps the car icon on every marker, e.g. after the app theme changed. */
+    fun setIcon(newIcon: BitmapDescriptor) {
+        icon = newIcon
+        for (marker in markersById.values) marker.setIcon(newIcon)
     }
 
     fun marker(id: String): Marker? = markersById[id]

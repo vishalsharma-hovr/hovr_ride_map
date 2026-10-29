@@ -7,6 +7,7 @@
 
     <!-- Bubble -->
     <LinearLayout
+        android:id="@+id/eta_bubble"
         android:layout_width="48dp"
         android:layout_height="48dp"
         android:orientation="vertical"
@@ -23,6 +24,7 @@
             android:textStyle="bold" />
 
         <TextView
+            android:id="@+id/eta_min"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="min"
@@ -32,11 +34,13 @@
 
     <!-- Pointer -->
     <View
+        android:id="@+id/eta_pointer"
         android:layout_width="4dp"
         android:layout_height="20dp"
         android:background="@color/green_700" />
 
     <View
+        android:id="@+id/eta_base"
         android:layout_width="20dp"
         android:layout_height="20dp"
         android:background="@drawable/bg_eta_inner_circle" />

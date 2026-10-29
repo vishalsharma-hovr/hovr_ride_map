@@ -67,6 +67,9 @@ struct RideMapViewRepresentable: UIViewRepresentable {
         private var pendingDriverLocation: [String: Any]?
 
         /// Used by recenter logic — backed by [CarMarkers].
+        private var tripCarFestiveVersion = -1
+        private var tripCarTint: UInt32?
+
         var carMarker: GMSMarker? {
             carMarkers?.marker(for: tripDriverId)
         }
@@ -75,6 +78,8 @@ struct RideMapViewRepresentable: UIViewRepresentable {
             if carMarkers == nil {
                 let carImage = Self.createTripCarIcon()
                 carMarkers = CarMarkers(map: mapView, icon: carImage)
+                tripCarFestiveVersion = HovrFestiveCar.version
+                tripCarTint = MapThemeColors.current.accent
             }
             replayPendingDriverFixIfNeeded()
         }
@@ -86,14 +91,16 @@ struct RideMapViewRepresentable: UIViewRepresentable {
             pendingDriverLocation = nil
         }
 
-        /// Matches [HomeViewGoogleMapIOS.createCarMarkers] icon sizing (28×28 pt).
+        /// Matches [HomeViewGoogleMapIOS.createCarMarkers] icon sizing (28×28 pt), in the
+        /// app theme's accent colour; a festive car keeps its own colours.
         private static func createTripCarIcon() -> UIImage {
+            if let festive = HovrFestiveCar.icon(length: 28) { return festive }
             let iconSize = CGSize(width: 28, height: 28)
             let iconNames = ["car-icon", "car_icon", "carIcon", "car"]
             for name in iconNames {
                 if let img = HovrRideMapResources.image(named: name),
                    let scaled = img.resized(to: iconSize) {
-                    return scaled
+                    return HovrCarIconTint.tinted(scaled, tint: MapThemeColors.current.accent)
                 }
             }
             return fallbackTripCarIcon()
@@ -157,6 +164,13 @@ struct RideMapViewRepresentable: UIViewRepresentable {
                 speedMps: 12,
                 timestampMs: Int64(Date().timeIntervalSince1970 * 1000)
             )
+            // The festive car and theme colour can change between driver updates.
+            let tint = MapThemeColors.current.accent
+            if HovrFestiveCar.version != tripCarFestiveVersion || tint != tripCarTint {
+                tripCarFestiveVersion = HovrFestiveCar.version
+                tripCarTint = tint
+                carMarkers.setIcon(Self.createTripCarIcon())
+            }
             carMarkers.upsert(fixes: [fix])
             trimCompletedPolylineBehindDriver()
         }
@@ -570,6 +584,7 @@ struct RideMapViewRepresentable: UIViewRepresentable {
         
         let mapView = GMSMapView(frame: .zero, camera: camera)
         configureMapSettings(mapView)
+        MapStylePolicy.shared.attach(mapView)
         mapView.delegate = context.coordinator
         context.coordinator.mapView = mapView
         context.coordinator.bindCarMarkers(on: mapView)

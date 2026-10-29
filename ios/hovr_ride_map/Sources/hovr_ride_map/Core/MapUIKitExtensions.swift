@@ -26,11 +26,12 @@ struct RoundedCorner: Shape {
     }
 }
 
+/// Route colours from the app theme (`MapThemeColors.current`), HOVR greens by default.
 enum HovrMapColors {
-    static let routeGreen = UIColor(red: 74 / 255, green: 171 / 255, blue: 36 / 255, alpha: 1)
-    static let routeGreenSwiftUI = Color(red: 74 / 255, green: 171 / 255, blue: 36 / 255)
-    static let routeGreenLightSwiftUI = Color(red: 0.18, green: 0.49, blue: 0.22)
-    static let routeGreenMutedSwiftUI = Color(red: 0.29, green: 0.67, blue: 0.22)
+    static var routeGreen: UIColor { MapThemeColors.current.accent.argbUIColor }
+    static var routeGreenSwiftUI: Color { MapThemeColors.current.accent.argbColor }
+    static var routeGreenLightSwiftUI: Color { MapThemeColors.current.accentStrong.argbColor }
+    static var routeGreenMutedSwiftUI: Color { MapThemeColors.current.accent.argbColor }
 }
 
 /// Disables native Google Maps chrome so only app polylines and the location dot are interactive.

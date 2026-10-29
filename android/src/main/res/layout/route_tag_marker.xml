@@ -11,6 +11,7 @@
     android:paddingEnd="4dp">
 
     <LinearLayout
+        android:id="@+id/route_tag_pill"
         android:layout_width="wrap_content"
         android:layout_height="30dp"
         android:background="@drawable/marker_background"
@@ -19,6 +20,7 @@
         android:padding="2dp">
 
         <ImageView
+            android:id="@+id/route_tag_dot"
             android:layout_width="14dp"
             android:layout_height="14dp"
             android:layout_marginStart="5dp"
@@ -51,6 +53,7 @@
         android:textSize="13sp" />
 
     <ImageView
+        android:id="@+id/route_tag_arrow"
         android:layout_width="20dp"
         android:layout_height="20dp"
         android:layout_gravity="center_vertical"

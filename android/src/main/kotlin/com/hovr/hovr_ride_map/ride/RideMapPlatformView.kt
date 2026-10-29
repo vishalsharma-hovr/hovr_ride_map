@@ -22,6 +22,9 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import com.hovr.hovr_ride_map.shared.BearingSmoother
 import com.hovr.hovr_ride_map.shared.MapChromePolicy
+import com.hovr.hovr_ride_map.shared.MapStylePolicy
+import com.hovr.hovr_ride_map.shared.MapThemeColors
+import com.hovr.hovr_ride_map.shared.MapThemeTint
 import com.hovr.hovr_ride_map.ChannelArgParsers
 import com.hovr.hovr_ride_map.RideViewChannelHub
 import com.google.android.gms.location.*
@@ -68,6 +71,8 @@ internal class RideMapPlatformView(
     private var userHasInteractedWithMap = false
     private var currentIconSizeDp = -1
     private var destIconCached: BitmapDescriptor? = null
+    // Colours the cached icons were drawn in; a theme change rebuilds them.
+    private var iconCacheColors: MapThemeColors? = null
 
     private val userIconCache = mutableMapOf<Int, BitmapDescriptor>()
 
@@ -87,6 +92,8 @@ internal class RideMapPlatformView(
     private val mainHandler = Handler(Looper.getMainLooper())
     private val tripDriverId = "trip-driver"
     private var tripCarMarkers: CarMarkers? = null
+    private var tripCarFestiveVersion = -1
+    private var tripCarTint: Int? = null
 
     private var pendingRoute: Pair<String, String?>? = null
     private var pendingPolylineString: String? = null
@@ -606,10 +613,24 @@ internal class RideMapPlatformView(
         return BitmapDescriptorFactory.fromBitmap(scaled)
     }
 
-    private fun getCarIcon(ctx: Context): BitmapDescriptor =
-        HovrCarIcon.bitmapDescriptor(ctx)
+    /** Trip car in the app theme's accent colour; a festive car keeps its own colours. */
+    private fun getCarIcon(ctx: Context): BitmapDescriptor {
+        tripCarFestiveVersion = HovrCarIcon.festiveVersion
+        val tint = MapThemeColors.current.accent
+        tripCarTint = tint
+        return HovrCarIcon.bitmapDescriptor(ctx, tint = tint)
+    }
+
+    private fun dropIconCachesIfThemeChanged() {
+        val colors = MapThemeColors.current
+        if (colors == iconCacheColors) return
+        iconCacheColors = colors
+        destIconCached = null
+        userIconCache.clear()
+    }
 
     private fun getDestinationIcon(ctx: Context, sizeDp: Int = 56): BitmapDescriptor {
+        dropIconCachesIfThemeChanged()
         return destIconCached ?: getBitmapDescriptorFromVector(
             ctx,
             R.drawable.circle_with_broad_green_background,
@@ -828,6 +849,10 @@ internal class RideMapPlatformView(
             return
         }
         pendingDriverFix = null
+        // The festive car and theme colour can change between driver updates.
+        val carIconStale = HovrCarIcon.festiveVersion != tripCarFestiveVersion ||
+            MapThemeColors.current.accent != tripCarTint
+        if (carIconStale) markers.setIcon(getCarIcon(mapView.context))
         markers.upsert(
             listOf(
                 CarFix(
@@ -1014,12 +1039,7 @@ internal class RideMapPlatformView(
                 }
             }
 
-            try {
-                setMapStyle(MapStyleOptions.loadRawResourceStyle(mapView.context, R.raw.hovr_maps_style))
-                Log.d(TAG, "✅ Map style applied")
-            } catch (e: Exception) {
-                Log.e(TAG, "Map style failed: ${e.message}")
-            }
+            MapStylePolicy.attach(this, mapView.context, R.raw.hovr_maps_style)
             MapChromePolicy.apply(this)
         }
 
@@ -1257,15 +1277,18 @@ internal class RideMapPlatformView(
         else -> 16
     }
 
-    private fun getUserIcon(sizeDp: Int): BitmapDescriptor =
-        userIconCache.getOrPut(sizeDp) {
+    private fun getUserIcon(sizeDp: Int): BitmapDescriptor {
+        dropIconCachesIfThemeChanged()
+        return userIconCache.getOrPut(sizeDp) {
             BitmapDescriptorFactory.fromBitmap(makeUserBitmap(sizeDp))
         }
+    }
 
     private fun getBitmapDescriptorFromVector(
         context: Context, vectorResId: Int, widthDp: Int, heightDp: Int
     ): BitmapDescriptor {
         val drawable = ContextCompat.getDrawable(context, vectorResId)!!
+        MapThemeTint.rings(drawable)
         val scale = context.resources.displayMetrics.density
         val widthPx = (widthDp * scale).toInt()
         val heightPx = (heightDp * scale).toInt()
@@ -1281,6 +1304,7 @@ internal class RideMapPlatformView(
 
     private fun makeUserBitmap(sizeDp: Int): Bitmap {
         val v = LayoutInflater.from(mapView.context).inflate(R.layout.custom_starting_point, null)
+        MapThemeTint.applyToStartingPoint(v)
         val px = (sizeDp * mapView.context.resources.displayMetrics.density).toInt()
         v.measure(
             View.MeasureSpec.makeMeasureSpec(px, View.MeasureSpec.EXACTLY),

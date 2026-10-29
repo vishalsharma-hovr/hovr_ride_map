@@ -6,6 +6,7 @@ import android.text.TextUtils
 import android.view.LayoutInflater
 import android.widget.TextView
 import com.hovr.hovr_ride_map.R
+import com.hovr.hovr_ride_map.shared.MapThemeTint
 import com.hovr.hovr_ride_map.utils.MapViewUtils.createBitmapFromView
 
 internal enum class RouteTaggedMarkerKind {
@@ -41,6 +42,7 @@ internal object RouteTaggedMarkerBitmap {
         val addressView = markerView.findViewById<TextView>(R.id.addressTextView)
         val tagView = markerView.findViewById<TextView>(R.id.tagLabelTextView)
 
+        MapThemeTint.applyToTagMarker(markerView)
         tagView.text = tag.tagLabel
         addressView.text = tag.address.ifBlank { tag.tagLabel }
         addressView.maxLines = if (tag.expanded) 2 else 1

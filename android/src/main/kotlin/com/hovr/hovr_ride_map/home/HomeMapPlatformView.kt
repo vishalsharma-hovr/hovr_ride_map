@@ -26,6 +26,8 @@ import com.hovr.hovr_ride_map.R
 import com.hovr.hovr_ride_map.RideViewChannelHub
 import com.hovr.hovr_ride_map.shared.HovrCarIcon
 import com.hovr.hovr_ride_map.shared.MapChromePolicy
+import com.hovr.hovr_ride_map.shared.MapStylePolicy
+import com.hovr.hovr_ride_map.shared.MapThemeColors
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.MapView
@@ -33,7 +35,6 @@ import com.google.android.gms.maps.OnMapReadyCallback
 import com.google.android.gms.maps.model.BitmapDescriptor
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.LatLng
-import com.google.android.gms.maps.model.MapStyleOptions
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.platform.PlatformView
@@ -58,6 +59,8 @@ internal class HomeMapPlatformView(
     private var googleMap: GoogleMap? = null
     private var firstFix = true
     private var carMarkers: CarMarkers? = null
+    private var carIconTint: Int? = null
+    private var carIconFestiveVersion = -1
 
     private var isMapReady = false
     private var pendingDriverUpdates: List<CarFix>? = null
@@ -132,13 +135,9 @@ internal class HomeMapPlatformView(
             }
         }
         MapChromePolicy.apply(map)
-        try {
-            map.setMapStyle(MapStyleOptions.loadRawResourceStyle(mapView.context, R.raw.hovr_maps_style))
-        } catch (e: Exception) {
-            Log.e(TAG, "Map style failed: ${e.message}")
-        }
+        MapStylePolicy.attach(map, mapView.context, R.raw.hovr_maps_style)
 
-        carMarkers = CarMarkers(map, getScaledCarIcon())
+        carMarkers = CarMarkers(map, themedCarIcon())
         isMapReady = true
         enableMyLocationLayer()
 
@@ -201,6 +200,7 @@ internal class HomeMapPlatformView(
                         if (isMapReady && carMarkers != null) {
                             mapView.post {
                                 val nowMono = android.os.SystemClock.elapsedRealtime()
+                                refreshCarIconIfThemeChanged()
                                 carMarkers?.upsert(fixes, nowMono)
                             }
                         } else {
@@ -273,8 +273,20 @@ internal class HomeMapPlatformView(
     }
 
     /* ───────────────────────── Helpers ───────────────────────── */
-    private fun getScaledCarIcon(): BitmapDescriptor =
-        HovrCarIcon.bitmapDescriptor(mapView.context)
+    /** Car marker in the app theme's accent colour (light/dark/festive). */
+    private fun themedCarIcon(): BitmapDescriptor {
+        val tint = MapThemeColors.current.accent
+        carIconTint = tint
+        carIconFestiveVersion = HovrCarIcon.festiveVersion
+        return HovrCarIcon.bitmapDescriptor(mapView.context, tint = tint)
+    }
+
+    /** Theme changes arrive between driver updates, so recolour on the next one. */
+    private fun refreshCarIconIfThemeChanged() {
+        val changed = MapThemeColors.current.accent != carIconTint ||
+            HovrCarIcon.festiveVersion != carIconFestiveVersion
+        if (changed) carMarkers?.setIcon(themedCarIcon())
+    }
 
     /* ───────────────────────── PlatformView contract ───────────────────────── */
     override fun getView(): View = mapView

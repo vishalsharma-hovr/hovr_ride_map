@@ -1,13 +1,13 @@
 package com.hovr.hovr_ride_map.ride
 
 import android.content.Context
-import android.graphics.Color
 import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.model.JointType
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.Polyline
 import com.google.android.gms.maps.model.PolylineOptions
 import com.google.android.gms.maps.model.RoundCap
+import com.hovr.hovr_ride_map.shared.MapThemeColors
 
 /**
  * HOVR brand green route stroke.
@@ -16,8 +16,9 @@ import com.google.android.gms.maps.model.RoundCap
  * polyline width with camera zoom — one stroke value is used at every zoom.
  */
 internal object RideMapRouteStyle {
-    /** HOVR brand green — matches app / iOS in-trip route. */
-    val strokeColor: Int = Color.parseColor("#4AAB24")
+    /** The app theme's accent (HOVR green by default) — matches iOS in-trip route. */
+    val strokeColor: Int
+        get() = MapThemeColors.current.accent
 
     /** Core stroke width in dp — mirrors iOS [RideMapRouteStyle.strokeWidth] (4–5pt). */
     const val strokeWidthDp: Float = 5f

@@ -112,7 +112,7 @@ func addMarker(at position: CLLocationCoordinate2D, on mapView: GMSMapView, isDr
     let marker = GMSMarker(position: position)
     if isDriver, let carImage = HovrRideMapResources.image(named: "car-icon") {
         let scale = zoomScale(for: mapView.camera.zoom)
-        marker.icon = carImage.resized(to: CGSize(width: scale, height: scale))
+        marker.icon = HovrFestiveCar.icon(length: scale) ?? carImage.resized(to: CGSize(width: scale, height: scale))
     } else {
         marker.icon = GMSMarker.markerImage(with: .red)
     }

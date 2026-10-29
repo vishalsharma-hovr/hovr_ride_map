@@ -1,3 +1,7 @@
+import 'dart:typed_data';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hovr_ride_map/hovr_ride_map.dart';
 
@@ -45,6 +49,111 @@ void main() {
       expect(marker.toJson()['lat'], 1);
       expect(marker.toJson()['lng'], 2);
       expect(marker.toJson()['bearingDegrees'], 90);
+    });
+  });
+
+  group('RideMapController.setMapStyle', () {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    const channel = MethodChannel(RideMapChannels.mapStyle);
+    final calls = <MethodCall>[];
+
+    setUp(() {
+      calls.clear();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            calls.add(call);
+            return null;
+          });
+    });
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    test('sends the style JSON to every native map', () async {
+      await RideMapController().setMapStyle('[{"elementType":"geometry"}]');
+
+      expect(calls.single.method, 'set-map-style');
+      expect(calls.single.arguments, {'json': '[{"elementType":"geometry"}]'});
+    });
+
+    test('null restores the default map look', () async {
+      await RideMapController().setMapStyle(null);
+
+      expect(calls.single.arguments, {'json': null});
+    });
+  });
+
+  group('RideMapColors', () {
+    final scheme = ColorScheme.fromSeed(
+      seedColor: Colors.orange,
+      brightness: Brightness.dark,
+    );
+
+    test('fromScheme takes the app theme roles', () {
+      final colors = RideMapColors.fromScheme(scheme);
+
+      expect(colors.toMap(), {
+        'accent': scheme.primary.toARGB32(),
+        'accentStrong': scheme.primary.toARGB32(),
+        'accentContainer': scheme.primaryContainer.toARGB32(),
+        'onAccent': scheme.onPrimary.toARGB32(),
+        'surface': scheme.surface.toARGB32(),
+        'onSurface': scheme.onSurface.toARGB32(),
+      });
+    });
+
+    test('equal schemes give equal colours', () {
+      expect(
+        RideMapColors.fromScheme(scheme),
+        RideMapColors.fromScheme(scheme),
+      );
+    });
+  });
+
+  group('RideMapController.setMapColors', () {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    const channel = MethodChannel(RideMapChannels.mapStyle);
+    final calls = <MethodCall>[];
+
+    setUp(() {
+      calls.clear();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            calls.add(call);
+            return null;
+          });
+    });
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    test(
+      'sends the festive car to every native map, null for the HOVR car',
+      () async {
+        final png = Uint8List.fromList([0x89, 0x50, 0x4E, 0x47]);
+
+        await RideMapController().setCarIcon(png);
+        await RideMapController().setCarIcon(null);
+
+        expect(calls.map((c) => c.method), ['set-car-icon', 'set-car-icon']);
+        expect(calls.first.arguments, {'png': png});
+        expect(calls.last.arguments, {'png': null});
+      },
+    );
+
+    test('sends the theme colour tokens to every native map', () async {
+      final colors = RideMapColors.fromScheme(
+        ColorScheme.fromSeed(seedColor: Colors.green),
+      );
+
+      await RideMapController().setMapColors(colors);
+
+      expect(calls.single.method, 'set-map-colors');
+      expect(calls.single.arguments, colors.toMap());
     });
   });
 }

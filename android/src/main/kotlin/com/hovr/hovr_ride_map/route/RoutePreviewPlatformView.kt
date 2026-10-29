@@ -36,6 +36,8 @@ import com.hovr.hovr_ride_map.R
 import com.hovr.hovr_ride_map.RideViewChannelHub
 import com.hovr.hovr_ride_map.ride.RideMapRouteClearState
 import com.hovr.hovr_ride_map.shared.MapChromePolicy
+import com.hovr.hovr_ride_map.shared.MapStylePolicy
+import com.hovr.hovr_ride_map.shared.MapThemeTint
 import com.hovr.hovr_ride_map.utils.MapViewUtils
 import com.hovr.hovr_ride_map.utils.MapViewUtils.createBitmapFromView
 import com.hovr.hovr_ride_map.utils.MapViewUtils.formatDurationHMS
@@ -196,7 +198,7 @@ internal class RoutePreviewPlatformView(
     private fun refreshStartMarkerIcon() {
         val marker = startMarker ?: return
         if (!::mMap.isInitialized) return
-        val bitmap = BitmapDescriptorFactory.fromBitmap(createBitmapFromView(startingPointView))
+        val bitmap = BitmapDescriptorFactory.fromBitmap(createBitmapFromView(startingPointView.also(MapThemeTint::applyToEtaMarker)))
         marker.setIcon(bitmap)
     }
 
@@ -271,6 +273,8 @@ internal class RoutePreviewPlatformView(
 
     override fun onMapReady(map: GoogleMap) {
         mMap = map
+        // Google's default look unless the host app sets a style.
+        MapStylePolicy.attach(mMap, mapView.context, null)
         if (disableUserInteraction) {
             MapChromePolicy.applyDisplayOnly(mMap)
         } else {
@@ -466,7 +470,7 @@ internal class RoutePreviewPlatformView(
                         )
                     } else {
                         val startBitmap = BitmapDescriptorFactory.fromBitmap(
-                            createBitmapFromView(startingPointView)
+                            createBitmapFromView(startingPointView.also(MapThemeTint::applyToEtaMarker))
                         )
                         startMarker = mMap.addMarker(
                             MarkerOptions().position(pointA).icon(startBitmap),
