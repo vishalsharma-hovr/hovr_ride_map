@@ -24,11 +24,14 @@ class RideMapController {
 
   final _etaController = StreamController<Duration>.broadcast();
 
+  /// Driver ETA reported by the native in-trip map (`DRIVER_ETA` callback).
   Stream<Duration> get driverEtaUpdates => _etaController.stream;
 
   /// App-wide singleton used by trip coordinators and legacy channel wrappers.
   static final RideMapController shared = RideMapController();
 
+  /// Recenters the in-trip map; with [meetAtPickup], fits driver and pickup
+  /// like [recenterDriverToPickup].
   Future<void> recenter({bool meetAtPickup = false}) async {
     if (meetAtPickup) {
       await recenterDriverToPickup();
@@ -66,10 +69,13 @@ class RideMapController {
     }
   }
 
+  /// Fits the route preview camera to the pickup → dropoff route.
   Future<void> recenterRoutePreview() async {
     await _safeInvoke(_routesChannel, 'recenter-map');
   }
 
+  /// Moves the in-trip driver car to [position]; [bearing] is an optional
+  /// heading in degrees from north.
   Future<void> updateDriverLocation(
     HovrLatLng position, {
     double? bearing,
@@ -94,6 +100,8 @@ class RideMapController {
     );
   }
 
+  /// Draws the in-trip route from a Google [encodedPolyline]; [force] redraws
+  /// even when the polyline is unchanged.
   Future<void> setRoutePolyline(
     String encodedPolyline, {
     bool force = false,
@@ -125,8 +133,10 @@ class RideMapController {
     }
   }
 
+  /// Same as [clearAllRoutes].
   Future<void> clearRoute() async => clearAllRoutes();
 
+  /// Clears the in-trip route and its markers.
   Future<void> clearInTripRoute() async {
     if (Platform.isAndroid) {
       await _safeInvoke(_rideViewChannel, 'clear-route');
@@ -135,12 +145,14 @@ class RideMapController {
     }
   }
 
+  /// Clears the route preview. Android only; no-op on iOS.
   Future<void> clearRoutePreview() async {
     if (Platform.isAndroid) {
       await _safeInvoke(_routesChannel, 'clear-route');
     }
   }
 
+  /// Clears the in-trip route and, on Android, the route preview.
   Future<void> clearAllRoutes() async {
     if (Platform.isAndroid) {
       await _safeInvoke(_rideViewChannel, 'clear-route');
@@ -150,6 +162,7 @@ class RideMapController {
     }
   }
 
+  /// Removes the driver car from the in-trip map.
   Future<void> clearDriverLocation() async {
     if (Platform.isAndroid) {
       await _safeInvoke(_rideViewChannel, 'clear-driver-location');
@@ -158,6 +171,7 @@ class RideMapController {
     }
   }
 
+  /// Redraws the route preview from a Google Routes API response.
   Future<void> redrawRoutePreview({
     required String computeRoutesResponseJson,
   }) async {
@@ -188,6 +202,7 @@ class RideMapController {
     await _safeInvoke(_styleChannel, 'set-car-icon', arguments: {'png': png});
   }
 
+  /// Shows [eta] in the in-trip map's ETA bubble (sent in whole seconds).
   Future<void> setEta(Duration eta) async {
     await _safeInvoke(
       _rideViewChannel,
@@ -196,6 +211,8 @@ class RideMapController {
     );
   }
 
+  /// Switches the in-trip map to [mode]. Not needed when rebuilding
+  /// `RideMapView` with a new mode, which syncs automatically.
   Future<void> setTripStage(RideMapMode mode) async {
     await _safeInvoke(
       _rideViewChannel,
@@ -204,6 +221,8 @@ class RideMapController {
     );
   }
 
+  /// Shows numbered intermediate stop markers; each stop has `latitude`,
+  /// `longitude` and an optional `address`.
   Future<void> setTripStops(List<Map<String, Object?>> stops) async {
     await _safeInvoke(
       _rideViewChannel,
@@ -212,6 +231,7 @@ class RideMapController {
     );
   }
 
+  /// Places the pickup, dropoff and rider markers; null values are skipped.
   Future<void> setTripLocations({
     HovrLatLng? pickup,
     HovrLatLng? dropoff,
@@ -240,6 +260,7 @@ class RideMapController {
     }
   }
 
+  /// Shows [drivers] as car markers on the home map.
   Future<void> showNearbyDrivers(List<DriverMarker> drivers) async {
     await _safeInvoke(
       _showDriversChannel,
@@ -248,12 +269,14 @@ class RideMapController {
     );
   }
 
+  /// Sends a raw `show-drivers` [payload] (`{"nearbyDrivers": [...]}`) as-is.
   Future<void> showNearbyDriversFromPayload(
     Map<String, dynamic> payload,
   ) async {
     await _safeInvoke(_showDriversChannel, 'show-drivers', arguments: payload);
   }
 
+  /// Stops native callbacks and closes [driverEtaUpdates].
   void dispose() {
     _rideViewChannel.setMethodCallHandler(null);
     _etaController.close();

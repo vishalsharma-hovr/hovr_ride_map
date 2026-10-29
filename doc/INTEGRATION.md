@@ -9,7 +9,7 @@ dependencies:
   hovr_ride_map:
     git:
       url: https://github.com/vishalsharma-hovr/hovr_ride_map.git
-      ref: v1.0.0
+      ref: v1.0.7
 ```
 
 **Local plugin development:**
@@ -59,6 +59,49 @@ await RideMapController.shared.setRoutePolyline(encodedPolyline);
 ```
 
 When trip stage changes, rebuild `RideMapView` with the new `RideMapMode` — the plugin pushes the stage to native code only when the mode value changes. The native platform view stays mounted across host rebuilds (stable platform view key, frozen `creationParams`).
+
+## 5. Route preview
+
+```dart
+RoutePreviewMapView(
+  config: RoutePreviewConfig(
+    pickup: HovrLatLng(pickupLat, pickupLng),
+    dropoff: HovrLatLng(dropoffLat, dropoffLng),
+    pickupName: 'Terminal 3',
+    dropoffName: 'Home',
+    computeRoutesResponseJson: routesResponse, // Google Routes API response
+  ),
+)
+```
+
+Address markers and display-only mode (scheduled-trip and receipt maps) are native creation params that `RoutePreviewConfig` does not expose yet. Pass them through `PlatformMapView`:
+
+```dart
+PlatformMapView(
+  viewType: RideMapChannels.routePreviewViewType,
+  creationParams: {
+    ...config.toCreationParams(),
+    'use-pickup-address-marker': true,
+    'use-dropoff-address-marker': true,
+    'disable-user-interaction': true, // scroll and zoom only, no rotate or tilt
+  },
+  hitTestBehavior: PlatformViewHitTestBehavior.translucent,
+)
+```
+
+All keys are listed in the [Channel contract](CHANNEL_CONTRACT.md#route-preview-creation-params).
+
+## 6. Theming
+
+Send the app's light/dark/festive theme once at startup and whenever it changes, before showing a map:
+
+```dart
+await RideMapController.shared.setMapStyle(mapStyleJson); // null = default look
+await RideMapController.shared.setMapColors(RideMapColors.fromScheme(Theme.of(context).colorScheme));
+await RideMapController.shared.setCarIcon(festiveCarPng); // null = HOVR car
+```
+
+See [Theming](THEMING.md) for what each call changes and when.
 
 ## Out of scope (host app)
 

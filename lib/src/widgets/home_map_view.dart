@@ -11,8 +11,13 @@ class HomeMapView extends StatelessWidget {
     this.initialLongitude,
   });
 
+  /// Key for the platform view.
   final Key? mapKey;
+
+  /// Starting camera target; used only when both coordinates are set.
   final double? initialLatitude;
+
+  /// Starting camera target; used only when both coordinates are set.
   final double? initialLongitude;
 
   @override

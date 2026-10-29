@@ -23,6 +23,7 @@ flowchart TB
 | Controller | `lib/src/controller/ride_map_controller.dart` | Typed method-channel API |
 | Bridge | `RideViewChannelHub`, `GoogleMapsPlugin`, `GlobalFlutterBridge` | Owns channels, validates args, `dispose()` cleanup |
 | Native map | `Ride/RideMapPlatformView.swift`, `ride/RideMapPlatformView.kt` | Single in-trip map for all `RideMapMode` values |
+| Theme state | `MapStylePolicy`, `MapThemeColors`, `HovrCarIcon` / `HovrFestiveCar` | App-wide style, colours and car icon shared by every map ([Theming](THEMING.md)) |
 
 ## Unified in-trip map
 

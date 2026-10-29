@@ -16,9 +16,15 @@ class PlatformMapView extends StatelessWidget {
     this.onPlatformViewCreated,
   });
 
+  /// One of the view types in `RideMapChannels`.
   final String viewType;
+
+  /// Sent to native code once, when the view is created.
   final Map<String, Object?> creationParams;
+
   final PlatformViewHitTestBehavior hitTestBehavior;
+
+  /// Called with the platform view id once native code has created the view.
   final ValueChanged<int>? onPlatformViewCreated;
 
   Set<Factory<OneSequenceGestureRecognizer>> get _gestureRecognizers => {

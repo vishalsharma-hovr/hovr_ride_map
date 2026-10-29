@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:hovr_ride_map/src/models/lat_lng.dart';
 
+/// Creation params for `RoutePreviewMapView`, read once when the view is created.
 @immutable
 class RoutePreviewConfig {
   const RoutePreviewConfig({
@@ -14,11 +15,20 @@ class RoutePreviewConfig {
 
   final HovrLatLng pickup;
   final HovrLatLng dropoff;
+
+  /// Address tag text at the pickup.
   final String? pickupName;
+
+  /// Address tag text at the dropoff.
   final String? dropoffName;
+
+  /// Google Routes API `computeRoutes` response to draw.
   final Map<String, dynamic>? computeRoutesResponseJson;
+
+  /// Sent to native code, which does not read it today.
   final double bottomSheetHeight;
 
+  /// Keys as listed in doc/CHANNEL_CONTRACT.md.
   Map<String, Object?> toCreationParams() => {
     'pickup-latitude': pickup.latitude,
     'pickup-longitude': pickup.longitude,

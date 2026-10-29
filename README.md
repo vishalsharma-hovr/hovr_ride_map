@@ -8,6 +8,7 @@ Native Google Maps platform views and typed ride-map channels for HOVR rider app
 - **RideMapView** — unified in-trip map for all `RideMapMode` values (one platform view, mode-driven behavior)
 - **RoutePreviewMapView** — pickup → dropoff route preview during choose-a-ride
 - **RideMapController** — typed API for driver location, polylines, ETA, trip stage, and route clearing
+- **Theming** — host app's light/dark/festive map style, route and marker colours, and festive car icon on every map
 
 ## Usage
 
@@ -16,7 +17,7 @@ dependencies:
   hovr_ride_map:
     git:
       url: https://github.com/vishalsharma-hovr/hovr_ride_map.git
-      ref: v1.0.0
+      ref: v1.0.7
 ```
 
 Local development:
@@ -36,6 +37,9 @@ const HomeMapView()
 RideMapView(mode: RideMapMode.meetAtPickup)
 
 await RideMapController.shared.updateDriverLocation(HovrLatLng(lat, lng));
+
+// App theme on every map
+await RideMapController.shared.setMapColors(RideMapColors.fromScheme(colorScheme));
 ```
 
 ## Documentation
@@ -44,6 +48,7 @@ await RideMapController.shared.updateDriverLocation(HovrLatLng(lat, lng));
 - [Channel contract](doc/CHANNEL_CONTRACT.md)
 - [Integration](doc/INTEGRATION.md)
 - [Map modes](doc/MAP_MODES.md)
+- [Theming](doc/THEMING.md)
 - [Contributing](CONTRIBUTING.md)
 
 ## Platform notes
@@ -67,5 +72,5 @@ cd android && ./gradlew :hovr_ride_map:testDebugUnitTest
 Publish:
 
 ```bash
-./tool/publish_to_github.sh v1.0.0
+./tool/publish_to_github.sh v1.0.7
 ```

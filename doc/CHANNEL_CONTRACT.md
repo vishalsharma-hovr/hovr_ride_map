@@ -43,6 +43,31 @@
 | `recenter-map` | none |
 | `clear-route` | none |
 
+## `hovr-ride-map/style`
+
+App-wide theme for every native map. See [Theming](THEMING.md).
+
+| Method | Arguments | Notes |
+|--------|-----------|-------|
+| `set-map-style` | `{ "json": "<Google map-style JSON list>" \| null }` | Restyles every open and future map; `null` restores each map's default |
+| `set-map-colors` | `{ "accent", "accentStrong", "accentContainer", "onAccent", "surface", "onSurface" }` (ARGB `int`s) | Applies to routes and markers drawn afterwards; missing tokens keep HOVR's default |
+| `set-car-icon` | `{ "png": <bytes> \| null }` | Festive car for every map; `null` restores the HOVR car |
+
+## Route preview creation params
+
+Read once by `routes-on-map-view` when the view is created.
+
+| Key | Type | Notes |
+|-----|------|-------|
+| `pickup-latitude`, `pickup-longitude` | `double` | Required |
+| `dropoff-latitude`, `dropoff-longitude` | `double` | Required |
+| `pickup-location-name`, `dropoff-location-name` | `String` | Address tag text |
+| `computeRoutesResponse` | `Map` | Google Routes API response to draw |
+| `bottomSheetHeight` | `double` | Sent by `RoutePreviewConfig`; not read by native code today |
+| `use-pickup-address-marker` | `bool` (default `false`) | Pickup address marker |
+| `use-dropoff-address-marker` | `bool` (default `false`) | Dropoff address marker |
+| `disable-user-interaction` | `bool` (default `false`) | Display-only map: scroll and zoom, no rotate or tilt |
+
 ## View types
 
 | Constant | Value |

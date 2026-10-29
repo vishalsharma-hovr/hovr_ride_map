@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+/// A latitude/longitude in degrees.
 @immutable
 class HovrLatLng {
   const HovrLatLng(this.latitude, this.longitude);
@@ -7,6 +8,7 @@ class HovrLatLng {
   final double latitude;
   final double longitude;
 
+  /// `{"lat", "lng"}` as the native maps read it.
   Map<String, double> toJson() => {'lat': latitude, 'lng': longitude};
 
   @override

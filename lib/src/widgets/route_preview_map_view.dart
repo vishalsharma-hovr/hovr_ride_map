@@ -8,7 +8,10 @@ import 'package:hovr_ride_map/src/widgets/platform_map_view.dart';
 class RoutePreviewMapView extends StatelessWidget {
   const RoutePreviewMapView({super.key, required this.config, this.viewKey});
 
+  /// Read once when the native view is created.
   final RoutePreviewConfig config;
+
+  /// Key for the platform view; defaults to one keyed on the view type.
   final Key? viewKey;
 
   @override

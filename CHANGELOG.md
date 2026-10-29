@@ -1,6 +1,9 @@
-## Unreleased
+## 1.0.7
 
 - `RideMapController.setMapStyle(json)` styles every native map (home, in-trip, route preview) with the host app's light/dark/festive map style; null keeps each map's default look.
+- `RideMapController.setMapColors(RideMapColors)` draws routes, ETA bubbles, address tags and stop markers in the host app's theme colours; `RideMapColors.fromScheme` builds them from a `ColorScheme`.
+- `RideMapController.setCarIcon(png)` shows a festive car on every map in its own colours; null restores the HOVR car, now tinted with the theme accent.
+- Docs: new [Theming](doc/THEMING.md) guide; style channel and route-preview creation params in the channel contract.
 
 ## 1.0.5
 

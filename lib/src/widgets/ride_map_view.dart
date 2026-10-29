@@ -12,6 +12,7 @@ import 'package:hovr_ride_map/src/widgets/platform_map_view.dart';
 class RideMapView extends StatefulWidget {
   const RideMapView({super.key, required this.mode, this.viewKey});
 
+  /// Current trip stage; changes are pushed to the native map.
   final RideMapMode mode;
 
   /// Optional key for the platform view. Defaults to a stable in-package key
