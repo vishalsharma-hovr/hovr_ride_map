@@ -76,6 +76,30 @@ class RideViewChannelHubTest {
         assertSame(home, RideViewChannelHub.targetHandlerForTest("recenter-map"))
     }
 
+    @Test
+    fun inTripRecenterWithFit_goesToRideMap_evenWhenPreviewOrHomeIsOnTop() {
+        val home = stubHandler()
+        val preview = stubHandler()
+        val ride = stubHandler()
+
+        RideViewChannelHub.push(home)
+        RideViewChannelHub.pushRideMap(ride)
+        RideViewChannelHub.push(preview)
+
+        val inTrip = MethodCall("recenter-map", mapOf("fit" to "fullPolyline"))
+        assertSame(ride, RideViewChannelHub.targetHandlerForTest(inTrip))
+        // Home-screen recenter sends no fit: still the top map.
+        assertSame(preview, RideViewChannelHub.targetHandlerForTest(MethodCall("recenter-map", null)))
+    }
+
+    @Test
+    fun inTripRecenterWithFit_fallsBackToTopMap_whenNoRideMap() {
+        val home = stubHandler()
+        RideViewChannelHub.push(home)
+
+        assertSame(home, RideViewChannelHub.targetHandlerForTest(MethodCall("recenter-map", mapOf("fit" to "driverToPickup"))))
+    }
+
     private fun stubHandler(): MethodChannel.MethodCallHandler =
         MethodChannel.MethodCallHandler { _, result -> result.success(null) }
 }

@@ -151,7 +151,7 @@ object RideViewChannelHub {
     private fun dispatchLocked(call: MethodCall, result: MethodChannel.Result) {
         applyClearPending(call.method)
 
-        val handler = resolveHandler(call.method)
+        val handler = resolveHandler(call)
         if (handler != null) {
             handler.onMethodCall(call, result)
             if (call.method in bufferableMethods) {
@@ -172,8 +172,11 @@ object RideViewChannelHub {
         result.notImplemented()
     }
 
-    private fun resolveHandler(method: String): MethodChannel.MethodCallHandler? {
-        if (method in rideMapOwnedMethods) {
+    private fun resolveHandler(call: MethodCall): MethodChannel.MethodCallHandler? {
+        val method = call.method
+        // Only in-trip recenters send `fit`; route preview / home on top would
+        // answer notImplemented or recenter on the rider instead of the route.
+        if (method in rideMapOwnedMethods || (method == "recenter-map" && call.argument<String>("fit") != null)) {
             return rideMapHandler ?: handlers.lastOrNull()
         }
         return handlers.lastOrNull() ?: rideMapHandler
@@ -181,7 +184,11 @@ object RideViewChannelHub {
 
     /** Visible for unit tests. */
     internal fun targetHandlerForTest(method: String): MethodChannel.MethodCallHandler? =
-        synchronized(lock) { resolveHandler(method) }
+        targetHandlerForTest(MethodCall(method, null))
+
+    /** Visible for unit tests. */
+    internal fun targetHandlerForTest(call: MethodCall): MethodChannel.MethodCallHandler? =
+        synchronized(lock) { resolveHandler(call) }
 
     /** Visible for unit tests — clears stack state between tests. */
     internal fun resetForTest() {

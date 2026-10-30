@@ -1,3 +1,7 @@
+## 1.0.10
+
+- Android: in-trip `recenter-map` calls (the ones with a `fit`: `recenterFullPolyline`, `recenterDriverToPickup`, `recenterDriverToDestination`) now go to the in-trip ride map even when a route-preview or home map is registered on top. Before, the route preview answered `notImplemented` (Dart saw `MissingPluginException`) and the home map recentred on the rider instead of the route. Home-screen recenter (no `fit`) is unchanged.
+
 ## 1.0.9
 
 - `RideMapController.setFestiveMarkers(List<FestiveMapMarker>)` shows decorative festive items on the home map (under every other marker, never tappable); an empty list clears them.
