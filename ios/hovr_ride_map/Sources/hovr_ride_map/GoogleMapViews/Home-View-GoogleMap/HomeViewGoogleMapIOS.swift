@@ -11,6 +11,20 @@ import QuartzCore
 import Flutter
 import Combine
 
+/// Home map's slot on [RideViewChannelHub]. Holds the map weakly: the hub keeps
+/// handlers alive, and the map must still deinit.
+private final class HomeMapRideChannelHandler: NSObject, RideViewChannelHandler {
+    weak var map: HomeViewGoogleMapIOS?
+
+    func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+        guard call.method == "recenter-map", let map else {
+            result(FlutterMethodNotImplemented)
+            return
+        }
+        map.recenterMap(result: result)
+    }
+}
+
 final class HomeViewGoogleMapIOS: NSObject, FlutterPlatformView {
     private static var instanceStack: [HomeViewGoogleMapIOS] = []
     private static let instanceStackLock = NSLock()
@@ -34,8 +48,9 @@ final class HomeViewGoogleMapIOS: NSObject, FlutterPlatformView {
     private var actualDriverCount = 0
     private var driversShownIds: Set<String> = []
     
-    // Method channels
-    private let reCenterChannel: FlutterMethodChannel
+    // Method channels. Recenter goes through the shared hub: owning
+    // ride-view-channel here would replace its handler and clear it on dispose.
+    private let rideViewHandler = HomeMapRideChannelHandler()
     private let driversChannel: FlutterMethodChannel
     
     // Buffer/drainer
@@ -68,7 +83,6 @@ final class HomeViewGoogleMapIOS: NSObject, FlutterPlatformView {
         let camera = GMSCameraPosition.camera(withLatitude: cameraLat, longitude: cameraLng, zoom: 15)
         self.mapView = GMSMapView.map(withFrame: frame, camera: camera)
         self.locationManager = CLLocationManager()
-        self.reCenterChannel = FlutterMethodChannel(name: "ride-view-channel", binaryMessenger: messenger)
         self.driversChannel = FlutterMethodChannel(name: "show-drivers-location-on-map", binaryMessenger: messenger)
         
         super.init()
@@ -87,6 +101,7 @@ final class HomeViewGoogleMapIOS: NSObject, FlutterPlatformView {
         
         setupMapView()
         MapStylePolicy.shared.attach(mapView)
+        FestiveMarkers.shared.attach(mapView)
         setupLocationManager()
         registerWithStack()
         observeRecenterFlag()
@@ -185,16 +200,6 @@ final class HomeViewGoogleMapIOS: NSObject, FlutterPlatformView {
     private func registerChannels() {
         print("🟢 Setting up Flutter channels")
         
-        reCenterChannel.setMethodCallHandler { [weak self] (call, result) in
-            guard let self = self else { return }
-            switch call.method {
-            case "recenter-map":
-                self.recenterMap(result: result)
-            default:
-                result(FlutterMethodNotImplemented)
-            }
-        }
-        
         driversChannel.setMethodCallHandler { [weak self] (call, result) in
             guard let self = self else { return }
             if call.method == "show-drivers" {
@@ -221,13 +226,14 @@ final class HomeViewGoogleMapIOS: NSObject, FlutterPlatformView {
     }
 
     private func clearChannels() {
-        reCenterChannel.setMethodCallHandler(nil)
         driversChannel.setMethodCallHandler(nil)
     }
 
     private func registerWithStack() {
         HomeViewGoogleMapIOS.instanceStackLock.lock()
         HomeViewGoogleMapIOS.instanceStack.append(self)
+        rideViewHandler.map = self
+        RideViewChannelHub.push(rideViewHandler)
         registerChannels()
         HomeViewGoogleMapIOS.instanceStackLock.unlock()
     }
@@ -236,6 +242,7 @@ final class HomeViewGoogleMapIOS: NSObject, FlutterPlatformView {
         HomeViewGoogleMapIOS.instanceStackLock.lock()
         let wasTop = HomeViewGoogleMapIOS.instanceStack.last === self
         HomeViewGoogleMapIOS.instanceStack.removeAll { $0 === self }
+        RideViewChannelHub.pop(rideViewHandler)
         if wasTop {
             clearChannels()
             HomeViewGoogleMapIOS.instanceStack.last?.registerChannels()
@@ -283,7 +290,7 @@ final class HomeViewGoogleMapIOS: NSObject, FlutterPlatformView {
         }
     }
     
-    private func recenterMap(result: @escaping FlutterResult) {
+    fileprivate func recenterMap(result: @escaping FlutterResult) {
         guard performRecenter() else {
             result(FlutterError(code: "LOCATION_ERROR", message: "Unable to get current location", details: nil))
             return

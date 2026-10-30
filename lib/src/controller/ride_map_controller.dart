@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 import 'package:hovr_ride_map/src/channels/ride_map_channels.dart';
+import 'package:hovr_ride_map/src/models/festive_map_marker.dart';
 import 'package:hovr_ride_map/src/models/driver_marker.dart';
 import 'package:hovr_ride_map/src/models/lat_lng.dart';
 import 'package:hovr_ride_map/src/models/ride_map_colors.dart';
@@ -200,6 +201,18 @@ class RideMapController {
   Future<void> setCarIcon(Uint8List? png) async {
     assert(png == null || png.isNotEmpty, 'car icon must not be empty');
     await _safeInvoke(_styleChannel, 'set-car-icon', arguments: {'png': png});
+  }
+
+  /// Shows [markers] as decorative festive items on the home map, replacing
+  /// any shown before; an empty list clears them. They sit under every other
+  /// marker and ignore taps.
+  Future<void> setFestiveMarkers(List<FestiveMapMarker> markers) async {
+    assert(markers.every((m) => m.png.isNotEmpty), 'festive marker images must not be empty');
+    await _safeInvoke(
+      _styleChannel,
+      'set-festive-markers',
+      arguments: {'markers': [for (final m in markers) m.toJson()]},
+    );
   }
 
   /// Shows [eta] in the in-trip map's ETA bubble (sent in whole seconds).

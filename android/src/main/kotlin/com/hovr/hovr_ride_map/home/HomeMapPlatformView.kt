@@ -26,6 +26,7 @@ import com.hovr.hovr_ride_map.R
 import com.hovr.hovr_ride_map.RideViewChannelHub
 import com.hovr.hovr_ride_map.shared.HovrCarIcon
 import com.hovr.hovr_ride_map.shared.MapChromePolicy
+import com.hovr.hovr_ride_map.shared.FestiveMarkers
 import com.hovr.hovr_ride_map.shared.MapStylePolicy
 import com.hovr.hovr_ride_map.shared.MapThemeColors
 import com.google.android.gms.maps.CameraUpdateFactory
@@ -136,6 +137,7 @@ internal class HomeMapPlatformView(
         }
         MapChromePolicy.apply(map)
         MapStylePolicy.attach(map, mapView.context, R.raw.hovr_maps_style)
+        FestiveMarkers.attach(map)
 
         carMarkers = CarMarkers(map, themedCarIcon())
         isMapReady = true

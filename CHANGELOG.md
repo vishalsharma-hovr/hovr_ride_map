@@ -1,3 +1,12 @@
+## 1.0.9
+
+- `RideMapController.setFestiveMarkers(List<FestiveMapMarker>)` shows decorative festive items on the home map (under every other marker, never tappable); an empty list clears them.
+- iOS: the home map no longer owns `ride-view-channel`. It registers with `RideViewChannelHub` like Android, so closing it no longer removes the channel's handler, and in-trip `recenter-map` calls stop failing with `MissingPluginException`. A contract test keeps the hub as the channel's only owner.
+
+## 1.0.8
+
+- Docs: theming guide, channel contract and dartdoc for the public API.
+
 ## 1.0.7
 
 - `RideMapController.setMapStyle(json)` styles every native map (home, in-trip, route preview) with the host app's light/dark/festive map style; null keeps each map's default look.

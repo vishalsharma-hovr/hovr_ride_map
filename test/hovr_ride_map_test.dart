@@ -145,6 +145,25 @@ void main() {
       },
     );
 
+    test('sends festive markers to the home map; an empty list clears them', () async {
+      final png = Uint8List.fromList([0x89, 0x50, 0x4E, 0x47]);
+      const lat = 43.65;
+      const lng = -79.38;
+
+      await RideMapController().setFestiveMarkers([
+        FestiveMapMarker(latitude: lat, longitude: lng, png: png),
+      ]);
+      await RideMapController().setFestiveMarkers(const []);
+
+      expect(calls.map((c) => c.method), ['set-festive-markers', 'set-festive-markers']);
+      expect(calls.first.arguments, {
+        'markers': [
+          {'lat': lat, 'lng': lng, 'png': png},
+        ],
+      });
+      expect(calls.last.arguments, {'markers': <Object?>[]});
+    });
+
     test('sends the theme colour tokens to every native map', () async {
       final colors = RideMapColors.fromScheme(
         ColorScheme.fromSeed(seedColor: Colors.green),

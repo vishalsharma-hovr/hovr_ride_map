@@ -4,6 +4,7 @@ library;
 export 'src/channels/ride_map_channels.dart';
 export 'src/controller/ride_map_controller.dart';
 export 'src/models/driver_marker.dart';
+export 'src/models/festive_map_marker.dart';
 export 'src/models/lat_lng.dart';
 export 'src/models/ride_map_colors.dart';
 export 'src/models/ride_map_mode.dart';

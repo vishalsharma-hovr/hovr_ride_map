@@ -31,14 +31,9 @@ final class GoogleMapsPlugin: NSObject, RideViewChannelHandler {
     static let instance = GoogleMapsPlugin()
     static var sharedMapController = RecenterMapController.shared
     static var routePolylineController = PolylineController.shared
-    static var flutterMethodChannel: FlutterMethodChannel?
 
     static func install(messenger: FlutterBinaryMessenger) {
         RideViewChannelHub.push(instance)
-        flutterMethodChannel = FlutterMethodChannel(
-            name: "ride-view-channel",
-            binaryMessenger: messenger
-        )
     }
 
     func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {

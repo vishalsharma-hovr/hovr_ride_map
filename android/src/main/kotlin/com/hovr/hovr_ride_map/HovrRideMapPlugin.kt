@@ -2,6 +2,7 @@ package com.hovr.hovr_ride_map
 
 import com.google.android.gms.maps.model.LatLng
 import com.hovr.hovr_ride_map.shared.MapStylePolicy
+import com.hovr.hovr_ride_map.shared.FestiveMarkers
 import com.hovr.hovr_ride_map.shared.HovrCarIcon
 import com.hovr.hovr_ride_map.shared.MapThemeColors
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -28,6 +29,8 @@ class HovrRideMapPlugin : FlutterPlugin {
                     "set-map-colors" -> MapThemeColors.update(call.arguments)
                     // Festive car for every map; null restores the HOVR car.
                     "set-car-icon" -> HovrCarIcon.setFestiveCar((call.arguments as? Map<*, *>)?.get("png") as? ByteArray)
+                    // Decorative festive items on the home map; an empty list clears them.
+                    "set-festive-markers" -> FestiveMarkers.update(call.arguments)
                     else -> {
                         result.notImplemented()
                         return@setMethodCallHandler

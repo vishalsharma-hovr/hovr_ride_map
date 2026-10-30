@@ -45,6 +45,9 @@ public class HovrRideMapPlugin: NSObject, FlutterPlugin {
                 // Festive car for every map; nil restores the HOVR car.
                 let png = (call.arguments as? [String: Any])?["png"] as? FlutterStandardTypedData
                 HovrFestiveCar.set(png: png?.data)
+            case "set-festive-markers":
+                // Decorative festive items on the home map; an empty list clears them.
+                FestiveMarkers.shared.update(arguments: call.arguments)
             case "set-map-colors":
                 // Applies to routes and markers drawn from now on.
                 MapThemeColors.current = MapThemeColors.fromArgs(call.arguments)
